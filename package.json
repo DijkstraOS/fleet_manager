@@ -1,0 +1,25 @@
+{
+  "name": "agv-new",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @agv/core && npm run build -w @agv/server && npm run build -w @agv/simulator && npm run build -w @agv/web",
+    "dev": "concurrently -n core,server,sim,web -c cyan,green,yellow,magenta \"npm run dev -w @agv/core\" \"npm run dev -w @agv/server\" \"npm run dev -w @agv/simulator\" \"npm run dev -w @agv/web\"",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "license:check": "node scripts/check-licenses.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.21",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@agv/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@agv/core": "file:../../packages/core",
+    "@fastify/cors": "^10.0.1",
+    "aedes": "^0.51.3",
+    "fastify": "^5.3.2",
+    "mqtt": "^5.10.4",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}
