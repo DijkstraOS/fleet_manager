@@ -1,4 +1,4 @@
-import { createAgvServer } from "./app.js";
+import { createAgvServer } from "./app";
 
 const port = Number(process.env.PORT || 4000);
 const mqttPort = Number(process.env.MQTT_PORT || 1883);

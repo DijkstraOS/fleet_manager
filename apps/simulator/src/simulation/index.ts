@@ -1,5 +1,5 @@
-import type { MapDocument, SimulatedAgv, VdaOrder, VdaState, VdaVisualization } from "./types.js";
-import { findNode } from "./map.js";
+import { findNode, type MapDocument, type VdaOrder, type VdaState, type VdaVisualization } from "@agv/core";
+import type { SimulatedAgv } from "./types";
 
 export function createSimulatedAgv(params: {
   serialNumber: string;
@@ -153,3 +153,5 @@ export function buildVisualization(agv: SimulatedAgv): VdaVisualization {
     },
   };
 }
+
+export type { SimulatedAgv } from "./types";

@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createDemoMap } from "@agv/core";
 import { expect, test } from "vitest";
-import { createAgvServer } from "../../apps/server/src/app.js";
-import { createSimulatorClient } from "../../apps/simulator/src/runtime.js";
+import { createAgvServer } from "../../apps/server/src/app";
+import { createSimulatorClient } from "../../apps/simulator/src/runtime";
 
-test("creates a map, starts a dummy AGV, sends an order, and completes it", async () => {
+test("creates a map, starts a simulator AGV client, sends an order, and completes it", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "agv-new-runtime-"));
   const port = await getFreePort();
   const mqttPort = await getFreePort();
@@ -19,33 +19,34 @@ test("creates a map, starts a dummy AGV, sends an order, and completes it", asyn
     mapStorePath: join(tempDir, "maps.json"),
     logger: false,
   });
-  const simulator = createSimulatorClient({
-    mqttBroker: `mqtt://127.0.0.1:${mqttPort}`,
-    interfaceName,
-    log: false,
-  });
+  const apiBase = `http://127.0.0.1:${port}`;
+  const map = { ...createDemoMap(), id: "integration-map", name: "Integration Map" };
+  let simulator: ReturnType<typeof createSimulatorClient> | null = null;
 
   try {
     await server.start();
-    await simulator.start();
-
-    const apiBase = `http://127.0.0.1:${port}`;
-    const map = { ...createDemoMap(), id: "integration-map", name: "Integration Map" };
     await postJson(`${apiBase}/api/maps`, map);
-    await postJson(`${apiBase}/api/sim/agvs`, {
-      serialNumber: "SIM-IT",
-      manufacturer: "DijkstraSim",
+
+    simulator = createSimulatorClient({
+      serverUrl: apiBase,
+      mqttBroker: `mqtt://127.0.0.1:${mqttPort}`,
+      interfaceName,
       mapId: map.id,
-      startNodeId: "dock-a",
+      agvCount: 1,
+      serialPrefix: "SIM",
+      manufacturer: "DijkstraSim",
+      startNodes: ["dock-a"],
       speedMetersPerSecond: 20,
+      log: false,
     });
+    await simulator.start();
 
     const idle = await waitForAgv(apiBase, (agv) => agv.state?.driving === false);
     expect(idle.state?.lastNodeId).toBe("dock-a");
 
     await postJson(`${apiBase}/api/orders`, {
       mapId: map.id,
-      agvSerialNumber: "SIM-IT",
+      agvSerialNumber: "SIM-001",
       routeNodeIds: ["dock-a", "corr-1", "corr-2"],
     });
 
@@ -58,7 +59,7 @@ test("creates a map, starts a dummy AGV, sends an order, and completes it", asyn
     );
     expect(completed.state?.orderId).toBe("");
   } finally {
-    await simulator.stop();
+    await simulator?.stop();
     await server.close();
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -86,7 +87,7 @@ async function waitForAgv(
   while (Date.now() - startedAt < timeoutMs) {
     const response = await fetch(`${apiBase}/api/agvs`);
     const agvs = (await response.json()) as RuntimeAgv[];
-    lastAgv = agvs.find((agv) => agv.serialNumber === "SIM-IT");
+    lastAgv = agvs.find((agv) => agv.serialNumber === "SIM-001");
     if (lastAgv && predicate(lastAgv)) return lastAgv;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

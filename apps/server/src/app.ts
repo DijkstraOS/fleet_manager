@@ -1,14 +1,18 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import { createFileMapRepository } from "./infra/file-map-repository";
+import { createMqttFleetGateway, type MqttFleetGateway } from "./infra/mqtt-gateway";
+import { createRealtimePublisher } from "./infra/websocket-realtime-publisher";
+import { createFleetHandlers } from "./services/fleet-service";
+import { createMapHandlers } from "./services/map-service";
+import { createOrderHandlers } from "./services/order-service";
 import {
-  buildVdaOrder,
-  exportLifDocument,
-  type MapDocument,
-  type OrderDraft,
-} from "@agv/core";
-import { MapStore } from "./store.js";
-import { RealtimeHub } from "./realtime.js";
-import { MqttHub } from "./mqtt-hub.js";
+  registerFleetRoutes,
+  registerHealthRoutes,
+  registerMapRoutes,
+  registerOrderRoutes,
+} from "./routes/index";
+import type { MapRepository, RealtimePublisher } from "./domain/ports";
 
 export interface AgvServerOptions {
   port?: number;
@@ -21,9 +25,9 @@ export interface AgvServerOptions {
 
 export interface AgvServerRuntime {
   fastify: FastifyInstance;
-  store: MapStore;
-  mqttHub: MqttHub;
-  realtime: RealtimeHub;
+  store: MapRepository;
+  mqttHub: MqttFleetGateway;
+  realtime: RealtimePublisher;
   port: number;
   mqttPort: number;
   interfaceName: string;
@@ -36,14 +40,15 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
   const mqttPort = options.mqttPort ?? 1883;
   const host = options.host ?? "0.0.0.0";
   const interfaceName = options.interfaceName ?? "agv-new";
+
   const fastify = Fastify({ logger: options.logger ?? true });
   await fastify.register(cors, { origin: true });
 
-  const store = new MapStore(options.mapStorePath);
+  const store = createFileMapRepository(options.mapStorePath);
   await store.load();
 
-  const realtime = new RealtimeHub(fastify.server);
-  const mqttHub = new MqttHub({
+  const realtime = createRealtimePublisher(fastify.server);
+  const mqttHub = createMqttFleetGateway({
     port: mqttPort,
     interfaceName,
     onAgvState: (agv) => {
@@ -51,6 +56,7 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
         type: "agv_state",
         serialNumber: agv.serialNumber,
         manufacturer: agv.manufacturer,
+        connectionState: agv.connectionState,
         state: agv.state,
       });
     },
@@ -67,98 +73,10 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
     },
   });
 
-  fastify.get("/api/health", async () => ({
-    ok: true,
-    mqtt: mqttHub.brokerUrl,
-    interfaceName,
-  }));
-
-  fastify.get("/api/maps", async () => store.list());
-
-  fastify.get<{ Params: { id: string } }>("/api/maps/:id", async (request, reply) => {
-    const map = store.get(request.params.id);
-    if (!map) return reply.code(404).send({ error: "Map not found." });
-    return map;
-  });
-
-  fastify.post<{ Body: MapDocument }>("/api/maps", async (request, reply) => {
-    try {
-      const map = await store.upsert(request.body);
-      realtime.broadcast({ type: "map_updated", map });
-      return map;
-    } catch (error) {
-      return reply.code(400).send({
-        error: error instanceof Error ? error.message : "Invalid map.",
-      });
-    }
-  });
-
-  fastify.post<{ Params: { id: string } }>("/api/maps/:id/export-lif", async (request, reply) => {
-    const map = store.get(request.params.id);
-    if (!map) return reply.code(404).send({ error: "Map not found." });
-    return exportLifDocument(map);
-  });
-
-  fastify.get("/api/agvs", async () => mqttHub.listAgvs());
-
-  fastify.post<{
-    Body: {
-      serialNumber?: string;
-      manufacturer?: string;
-      mapId: string;
-      startNodeId?: string;
-      speedMetersPerSecond?: number;
-    };
-  }>("/api/sim/agvs", async (request, reply) => {
-    const map = store.get(request.body.mapId);
-    if (!map) return reply.code(404).send({ error: "Map not found." });
-    const startNodeId = request.body.startNodeId || map.nodes[0]?.id;
-    if (!startNodeId) return reply.code(400).send({ error: "Map needs at least one node." });
-
-    const serialNumber = request.body.serialNumber || "SIM-001";
-    const manufacturer = request.body.manufacturer || "DijkstraSim";
-    const simRequest: {
-      serialNumber: string;
-      manufacturer: string;
-      map: MapDocument;
-      startNodeId: string;
-      speedMetersPerSecond?: number;
-    } = {
-      serialNumber,
-      manufacturer,
-      map,
-      startNodeId,
-    };
-    if (request.body.speedMetersPerSecond !== undefined) {
-      simRequest.speedMetersPerSecond = request.body.speedMetersPerSecond;
-    }
-    mqttHub.requestSimulatedAgv(simRequest);
-    return { ok: true, serialNumber, manufacturer, mapId: map.id, startNodeId };
-  });
-
-  fastify.post<{ Body: OrderDraft }>("/api/orders", async (request, reply) => {
-    const map = store.get(request.body.mapId);
-    if (!map) return reply.code(404).send({ error: "Map not found." });
-    const agv = mqttHub.getAgv(request.body.agvSerialNumber);
-    if (!agv) return reply.code(404).send({ error: "AGV not connected." });
-
-    try {
-      const order = buildVdaOrder(map, request.body);
-      mqttHub.publishOrder(agv, order);
-      const payload = {
-        status: "sent",
-        orderId: order.orderId,
-        serialNumber: agv.serialNumber,
-        timestamp: new Date().toISOString(),
-      };
-      realtime.broadcast({ type: "order_status", ...payload });
-      return { ok: true, order };
-    } catch (error) {
-      return reply.code(400).send({
-        error: error instanceof Error ? error.message : "Invalid order.",
-      });
-    }
-  });
+  registerHealthRoutes(fastify, { mqttBrokerUrl: mqttHub.brokerUrl, interfaceName });
+  registerMapRoutes(fastify, createMapHandlers(store, realtime));
+  registerFleetRoutes(fastify, createFleetHandlers(mqttHub));
+  registerOrderRoutes(fastify, createOrderHandlers(store, mqttHub, realtime));
 
   return {
     fastify,

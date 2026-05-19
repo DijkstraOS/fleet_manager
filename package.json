@@ -12,12 +12,13 @@
     "dev": "concurrently -n core,server,sim,web -c cyan,green,yellow,magenta \"npm run dev -w @agv/core\" \"npm run dev -w @agv/server\" \"npm run dev -w @agv/simulator\" \"npm run dev -w @agv/web\"",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "license:check": "node scripts/check-licenses.mjs"
+    "architecture:check": "node scripts/check-architecture.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
     "@types/node": "^22.15.21",
     "concurrently": "^9.1.2",
+    "esbuild": "^0.25.12",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"

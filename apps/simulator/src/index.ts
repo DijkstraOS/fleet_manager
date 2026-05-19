@@ -1,11 +1,7 @@
-import { createSimulatorClient } from "./runtime.js";
+import { createSimulatorClient } from "./runtime";
+import { loadSimulatorConfig } from "./config/env";
 
-const runtime = createSimulatorClient({
-  mqttBroker: process.env.MQTT_BROKER || "mqtt://127.0.0.1:1883",
-  interfaceName: process.env.INTERFACE_NAME || "agv-new",
-  defaultSerial: process.env.AGV_SERIAL || "SIM-001",
-  defaultManufacturer: process.env.AGV_MANUFACTURER || "DijkstraSim",
-});
+const runtime = createSimulatorClient(loadSimulatorConfig());
 
 await runtime.start();
 

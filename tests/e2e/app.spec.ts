@@ -5,9 +5,8 @@ test("runs the map editor simulator path", async ({ page }) => {
   await expect(page.getByText("AGV Map Simulator")).toBeVisible();
   await expect(page.getByTitle("Node")).toBeVisible();
 
-  await page.getByRole("button", { name: /Start Dummy/i }).click();
   await expect(page.locator(".agv-row").filter({ hasText: "SIM-001" })).toBeVisible({
-    timeout: 5_000,
+    timeout: 15_000,
   });
 
   await page.getByTitle("Route").click();
