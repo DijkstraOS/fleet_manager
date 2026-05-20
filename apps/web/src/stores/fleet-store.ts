@@ -8,11 +8,21 @@ export interface RealtimeAgv {
   visualization: VdaVisualization | null;
 }
 
+export interface TrackedOrderStatus {
+  serialNumber: string;
+  orderId: string;
+  status: string;
+  timestamp: string;
+  routeId?: string;
+  routeName?: string;
+}
+
 export interface FleetState {
   agvs: Record<string, RealtimeAgv>;
   selectedAgvSerial: string | null;
   realtimeStatus: string;
   orderStatus: string;
+  orderStatuses: Record<string, TrackedOrderStatus>;
   selectAgv: (serialNumber: string) => void;
   setRealtimeStatus: (status: string) => void;
   setOrderStatus: (status: string) => void;
@@ -24,6 +34,7 @@ export const useFleetStore = create<FleetState>((set) => ({
   selectedAgvSerial: null,
   realtimeStatus: "Connecting realtime...",
   orderStatus: "",
+  orderStatuses: {},
 
   selectAgv: (selectedAgvSerial) => set({ selectedAgvSerial }),
   setRealtimeStatus: (realtimeStatus) => set({ realtimeStatus }),
@@ -63,9 +74,29 @@ export const useFleetStore = create<FleetState>((set) => ({
     }
 
     if (message.type === "order_status") {
-      set({
-        orderStatus: `${message.serialNumber || "AGV"} order ${message.orderId || ""}: ${message.status}`,
-      });
+      const serialNumber = String(message.serialNumber || "AGV");
+      const orderId = String(message.orderId || "");
+      const status = String(message.status || "");
+      const routeName = typeof message.routeName === "string" ? message.routeName : undefined;
+      const routeId = typeof message.routeId === "string" ? message.routeId : undefined;
+      const timestamp = typeof message.timestamp === "string" ? message.timestamp : new Date().toISOString();
+      const tracked: TrackedOrderStatus = {
+        serialNumber,
+        orderId,
+        status,
+        timestamp,
+        ...(routeId ? { routeId } : {}),
+        ...(routeName ? { routeName } : {}),
+      };
+      set((state) => ({
+        orderStatuses: {
+          ...state.orderStatuses,
+          [serialNumber]: tracked,
+        },
+        orderStatus: routeName
+          ? `${serialNumber} ${routeName}: ${status}`
+          : `${serialNumber} order ${orderId}: ${status}`,
+      }));
     }
   },
 }));

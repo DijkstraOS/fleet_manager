@@ -8,6 +8,8 @@ export interface OrderDraft {
   mapId: string;
   agvSerialNumber: string;
   routeNodeIds: string[];
+  routeId?: string;
+  routeName?: string;
 }
 
 export interface VdaOrder {

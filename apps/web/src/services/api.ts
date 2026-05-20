@@ -1,4 +1,4 @@
-import type { MapDocument, OrderDraft } from "@agv/core";
+import type { MapDocument, OrderDraft, RouteDocument } from "@agv/core";
 
 export interface AgvSnapshot {
   serialNumber: string;
@@ -41,6 +41,24 @@ export function saveMap(map: MapDocument) {
 
 export function exportLif(mapId: string) {
   return request<unknown>(`/api/maps/${encodeURIComponent(mapId)}/export-lif`, { method: "POST" });
+}
+
+export function listRoutes(mapId?: string) {
+  const query = mapId ? `?mapId=${encodeURIComponent(mapId)}` : "";
+  return request<RouteDocument[]>(`/api/routes${query}`);
+}
+
+export function saveRoute(route: RouteDocument) {
+  return request<RouteDocument>("/api/routes", {
+    method: "POST",
+    body: JSON.stringify(route),
+  });
+}
+
+export function deleteRoute(routeId: string) {
+  return request<{ ok: boolean }>(`/api/routes/${encodeURIComponent(routeId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function listAgvs() {

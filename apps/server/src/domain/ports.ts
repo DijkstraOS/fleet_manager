@@ -1,4 +1,4 @@
-import type { LifDocument, MapDocument, OrderDraft, VdaOrder, VdaState, VdaVisualization } from "@agv/core";
+import type { LifDocument, MapDocument, OrderDraft, RouteDocument, VdaOrder, VdaState, VdaVisualization } from "@agv/core";
 
 export interface MapSummary {
   id: string;
@@ -14,6 +14,15 @@ export interface MapRepository {
   list: () => MapSummary[];
   get: (id: string) => MapDocument | undefined;
   upsert: (map: MapDocument) => Promise<MapDocument>;
+  close?: () => Promise<void>;
+}
+
+export interface RouteRepository {
+  load: () => Promise<void>;
+  list: (mapId?: string) => RouteDocument[];
+  get: (id: string) => RouteDocument | undefined;
+  upsert: (route: RouteDocument) => Promise<RouteDocument>;
+  delete: (id: string) => Promise<boolean>;
   close?: () => Promise<void>;
 }
 
@@ -51,6 +60,8 @@ export interface OrderResult {
   serialNumber: string;
   timestamp: string;
   order: VdaOrder;
+  routeId?: string;
+  routeName?: string;
 }
 
 export type OrderRequest = OrderDraft;
@@ -60,6 +71,12 @@ export interface MapHandlers {
   getMap: (id: string) => MapDocument | undefined;
   saveMap: (map: MapDocument) => Promise<MapDocument>;
   exportLif: (id: string) => LifDocument | undefined;
+}
+
+export interface RouteHandlers {
+  listRoutes: (mapId?: string) => RouteDocument[];
+  saveRoute: (route: RouteDocument) => Promise<RouteDocument>;
+  deleteRoute: (id: string) => Promise<boolean>;
 }
 
 export interface FleetHandlers {

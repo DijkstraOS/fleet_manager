@@ -9,6 +9,7 @@ describe("fleet store", () => {
       selectedAgvSerial: null,
       realtimeStatus: "Connecting realtime...",
       orderStatus: "",
+      orderStatuses: {},
     });
   });
 
@@ -40,6 +41,22 @@ describe("fleet store", () => {
     });
 
     expect(useFleetStore.getState().selectedAgvSerial).toBe("SIM-001");
+  });
+
+  it("tracks route names from order status messages", () => {
+    useFleetStore.getState().handleRealtimeMessage({
+      type: "order_status",
+      serialNumber: "SIM-001",
+      orderId: "order-1",
+      status: "completed",
+      routeId: "dock-run",
+      routeName: "Dock Run",
+      timestamp: new Date(0).toISOString(),
+    });
+
+    const state = useFleetStore.getState();
+    expect(state.orderStatuses["SIM-001"]?.routeName).toBe("Dock Run");
+    expect(state.orderStatus).toBe("SIM-001 Dock Run: completed");
   });
 });
 

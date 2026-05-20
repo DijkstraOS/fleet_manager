@@ -1,4 +1,4 @@
-import type { MapDocument, MapEdge, MapNode, ValidationIssue } from "./types";
+import type { MapDocument, MapEdge, MapNode, RouteDocument, ValidationIssue } from "./types";
 
 export function createEmptyMap(name = "Untitled Map"): MapDocument {
   const now = new Date().toISOString();
@@ -148,6 +148,26 @@ export function validateRoute(map: MapDocument, routeNodeIds: string[]): Validat
   return issues;
 }
 
+export function validateRouteDocument(map: MapDocument | undefined, route: RouteDocument): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (!route.id.trim()) {
+    issues.push({ code: "route.id.empty", message: "Route id is required." });
+  }
+  if (!route.name.trim()) {
+    issues.push({ code: "route.name.empty", message: "Route name is required." });
+  }
+  if (!map) {
+    issues.push({ code: "route.map.missing", message: `Route map ${route.mapId} was not found.` });
+    return issues;
+  }
+  if (route.mapId !== map.id) {
+    issues.push({ code: "route.map.mismatch", message: `Route ${route.id} belongs to map ${route.mapId}, not ${map.id}.` });
+  }
+
+  return [...issues, ...validateRoute(map, route.nodeIds)];
+}
+
 export function nextNodeId(map: MapDocument): string {
   let index = map.nodes.length + 1;
   while (map.nodes.some((node) => node.id === `n-${index}`)) index += 1;
@@ -162,6 +182,14 @@ export function nextEdgeId(map: MapDocument, from: string, to: string): string {
   return `${base}-${index}`;
 }
 
+export function nextRouteId(routes: RouteDocument[], name: string): string {
+  const base = slugify(name) || "route";
+  if (!routes.some((route) => route.id === base)) return base;
+  let index = 2;
+  while (routes.some((route) => route.id === `${base}-${index}`)) index += 1;
+  return `${base}-${index}`;
+}
+
 export function slugify(value: string): string {
   return value
     .trim()
@@ -170,4 +198,4 @@ export function slugify(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export type { EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, ValidationIssue } from "./types";
+export type { EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, RouteDocument, ValidationIssue } from "./types";

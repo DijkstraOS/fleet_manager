@@ -5,9 +5,16 @@ export function ToolButton(props: {
   title: string;
   icon: ReactNode;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <button className={props.active ? "icon-button active" : "icon-button"} title={props.title} onClick={props.onClick}>
+    <button
+      type="button"
+      className={props.active ? "icon-button active" : "icon-button"}
+      title={props.title}
+      onClick={props.onClick}
+      disabled={props.disabled}
+    >
       {props.icon}
     </button>
   );

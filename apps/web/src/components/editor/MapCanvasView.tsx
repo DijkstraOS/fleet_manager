@@ -1,6 +1,8 @@
-import type { PointerEvent, RefObject } from "react";
+import type { PointerEvent, RefObject, WheelEvent } from "react";
 import type { MapDocument, MapEdge, MapNode, VdaState, VdaVisualization } from "@agv/core";
-import { GRID } from "../../lib/geometry";
+import { LocateFixed, Minus, Plus } from "lucide-react";
+import { GRID, type CanvasBounds } from "../../lib/geometry";
+import type { WorkspaceMode } from "../../types";
 
 export type CanvasSelection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
 
@@ -10,26 +12,24 @@ export interface CanvasAgv {
   visualization: VdaVisualization | null;
 }
 
-export interface CanvasBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface MapCanvasViewProps {
   svgRef: RefObject<SVGSVGElement | null>;
   map: MapDocument;
   bounds: CanvasBounds;
+  workspaceMode: WorkspaceMode;
   selection: CanvasSelection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   agvs: CanvasAgv[];
   onCanvasPointerDown: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => void;
-  onCanvasPointerUp: () => void;
+  onCanvasPointerUp: (event: PointerEvent<SVGSVGElement>) => void;
+  onCanvasWheel: (event: WheelEvent<SVGSVGElement>) => void;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onResetView: () => void;
 }
 
 export function MapCanvasView(props: MapCanvasViewProps) {
@@ -43,6 +43,7 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         onPointerMove={props.onCanvasPointerMove}
         onPointerUp={props.onCanvasPointerUp}
         onPointerLeave={props.onCanvasPointerUp}
+        onWheel={props.onCanvasWheel}
       >
         <GridLayer bounds={props.bounds} />
         <EdgeLayer
@@ -50,6 +51,7 @@ export function MapCanvasView(props: MapCanvasViewProps) {
           nodes={props.map.nodes}
           selection={props.selection}
           routeNodeIds={props.routeNodeIds}
+          workspaceMode={props.workspaceMode}
           onEdgePointerDown={props.onEdgePointerDown}
         />
         <NodeLayer
@@ -57,28 +59,34 @@ export function MapCanvasView(props: MapCanvasViewProps) {
           selection={props.selection}
           edgeStartNodeId={props.edgeStartNodeId}
           routeNodeIds={props.routeNodeIds}
+          workspaceMode={props.workspaceMode}
           onNodePointerDown={props.onNodePointerDown}
         />
         <AgvOverlayLayer agvs={props.agvs} />
       </svg>
+      <div className="canvas-controls" aria-label="Canvas zoom controls">
+        <button type="button" className="icon-button" title="Zoom in" onClick={props.onZoomIn}><Plus /></button>
+        <button type="button" className="icon-button" title="Zoom out" onClick={props.onZoomOut}><Minus /></button>
+        <button type="button" className="icon-button" title="Reset view" onClick={props.onResetView}><LocateFixed /></button>
+      </div>
     </section>
   );
 }
 
 function GridLayer(props: { bounds: CanvasBounds }) {
   return (
-    <>
+    <g pointerEvents="none">
       <defs>
         <pattern id="grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
           <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="#d7dee8" strokeWidth="0.015" />
         </pattern>
-        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
           <path d="M 0 0 L 10 5 L 0 10 z" />
         </marker>
       </defs>
       <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="#f8fafc" />
       <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="url(#grid)" />
-    </>
+    </g>
   );
 }
 
@@ -87,6 +95,7 @@ function EdgeLayer(props: {
   nodes: MapNode[];
   selection: CanvasSelection;
   routeNodeIds: string[];
+  workspaceMode: WorkspaceMode;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
 }) {
   return (
@@ -97,6 +106,7 @@ function EdgeLayer(props: {
         if (!from || !to) return null;
         const active = props.selection?.type === "edge" && props.selection.id === edge.id;
         const routeActive = routeContainsEdge(props.routeNodeIds, edge.from, edge.to);
+        const className = edgeClass(active, routeActive, props.workspaceMode);
         return (
           <g key={edge.id} onPointerDown={(event) => props.onEdgePointerDown(event, edge.id)}>
             <line
@@ -104,10 +114,9 @@ function EdgeLayer(props: {
               y1={from.y}
               x2={to.x}
               y2={to.y}
-              className={active ? "edge active" : routeActive ? "edge route" : "edge"}
+              className={className}
               markerEnd="url(#arrow)"
             />
-            <text className="edge-label" x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 0.2}>{edge.id}</text>
           </g>
         );
       })}
@@ -138,13 +147,14 @@ function NodeLayer(props: {
   selection: CanvasSelection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
+  workspaceMode: WorkspaceMode;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
 }) {
   return (
     <>
       {props.nodes.map((node) => (
         <g key={node.id} onPointerDown={(event) => props.onNodePointerDown(event, node)}>
-          <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds)} cx={node.x} cy={node.y} r="0.28" />
+          <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds, props.workspaceMode)} cx={node.x} cy={node.y} r="0.28" />
           <text className="node-label" x={node.x + 0.35} y={node.y - 0.35}>{node.label || node.id}</text>
         </g>
       ))}
@@ -156,8 +166,17 @@ function routeContainsEdge(route: string[], from: string, to: string) {
   return route.some((nodeId, index) => nodeId === from && route[index + 1] === to);
 }
 
-function nodeClass(id: string, selection: CanvasSelection, edgeStart: string | null, route: string[]) {
+function edgeClass(active: boolean, routeActive: boolean, workspaceMode: WorkspaceMode) {
+  const classes = ["edge"];
+  if (workspaceMode !== "map") classes.push("subtle");
+  if (active) classes.push("active");
+  if (routeActive) classes.push("route");
+  return classes.join(" ");
+}
+
+function nodeClass(id: string, selection: CanvasSelection, edgeStart: string | null, route: string[], workspaceMode: WorkspaceMode) {
   const classes = ["node"];
+  if (workspaceMode !== "map") classes.push("subtle");
   if (selection?.type === "node" && selection.id === id) classes.push("active");
   if (edgeStart === id) classes.push("edge-start");
   if (route.includes(id)) classes.push("route");

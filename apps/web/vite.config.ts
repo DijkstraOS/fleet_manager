@@ -2,6 +2,9 @@ import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 
+const webPort = Number(process.env.VITE_WEB_PORT || 5173);
+const apiTarget = process.env.VITE_API_TARGET || "http://127.0.0.1:4000";
+
 export default defineConfig({
   plugins: [react() as unknown as never],
   resolve: {
@@ -10,11 +13,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: webPort,
+    strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:4000",
+      "/api": apiTarget,
       "/ws": {
-        target: "ws://127.0.0.1:4000",
+        target: apiTarget.replace(/^http/, "ws"),
         ws: true,
       },
     },

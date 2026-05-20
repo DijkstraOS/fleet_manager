@@ -34,8 +34,10 @@ function EdgeInspector(props: { edge: MapEdge; onChange: (edge: MapEdge) => void
   return (
     <section>
       <h2>Edge</h2>
-      <Field label="ID" value={props.edge.id} onChange={(id) => props.onChange({ ...props.edge, id })} />
-      <Field label="Label" value={props.edge.label} onChange={(label) => props.onChange({ ...props.edge, label })} />
+      <div className="property-row">
+        <span>Direction</span>
+        <strong>{props.edge.from} {"->"} {props.edge.to}</strong>
+      </div>
       <NumberField label="Max speed" value={props.edge.maxSpeed ?? 1.2} onChange={(maxSpeed) => props.onChange({ ...props.edge, maxSpeed })} />
       <NumberField label="Orientation" value={props.edge.orientation ?? 0} onChange={(orientation) => props.onChange({ ...props.edge, orientation })} />
       <label className="field">

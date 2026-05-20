@@ -4,8 +4,10 @@ import {
   createDemoMap,
   exportLifDocument,
   importLifDocument,
+  nextRouteId,
   validateMap,
   validateRoute,
+  validateRouteDocument,
 } from "./index";
 
 describe("map validation", () => {
@@ -17,6 +19,39 @@ describe("map validation", () => {
     const map = createDemoMap();
     const issues = validateRoute(map, ["dock-a", "mat-b"]);
     expect(issues[0]?.code).toBe("route.edge.missing");
+  });
+
+  it("validates saved route documents against directed map edges", () => {
+    const map = createDemoMap();
+
+    expect(validateRouteDocument(map, {
+      id: "dock-run",
+      mapId: map.id,
+      name: "Dock Run",
+      nodeIds: ["dock-a", "corr-1"],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    })).toEqual([]);
+
+    expect(validateRouteDocument(map, {
+      id: "bad-run",
+      mapId: map.id,
+      name: "Bad Run",
+      nodeIds: ["dock-a", "mat-b"],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    })[0]?.code).toBe("route.edge.missing");
+  });
+
+  it("generates stable route ids from names", () => {
+    expect(nextRouteId([{
+      id: "dock-run",
+      mapId: "demo-grid",
+      name: "Dock Run",
+      nodeIds: ["dock-a", "corr-1"],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    }], "Dock Run")).toBe("dock-run-2");
   });
 });
 

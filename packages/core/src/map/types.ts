@@ -43,6 +43,15 @@ export interface MapDocument {
   unsupported?: Record<string, unknown>;
 }
 
+export interface RouteDocument {
+  id: string;
+  mapId: string;
+  name: string;
+  nodeIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ValidationIssue {
   code: string;
   message: string;

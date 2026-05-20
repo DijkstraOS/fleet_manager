@@ -65,6 +65,41 @@ select {
   justify-content: flex-end;
 }
 
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: #eef3f8;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+}
+
+.mode-button {
+  border: 0;
+  background: transparent;
+  color: #46566d;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.mode-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.mode-button.active {
+  background: #ffffff;
+  color: #155eef;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+}
+
 .icon-button,
 .action-button,
 .secondary-button {
@@ -82,7 +117,8 @@ select {
 }
 
 .icon-button svg,
-.action-button svg {
+.action-button svg,
+.secondary-button svg {
   width: 18px;
   height: 18px;
 }
@@ -104,11 +140,26 @@ select {
   cursor: not-allowed;
 }
 
+button:disabled,
+.icon-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 280px;
   min-height: 0;
+}
+
+.map-workspace {
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
+
+.routes-workspace,
+.tracking-workspace {
+  grid-template-columns: 320px minmax(0, 1fr);
 }
 
 .left-panel,
@@ -126,6 +177,18 @@ select {
 
 section + section {
   margin-top: 22px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section-heading h2 {
+  margin-bottom: 0;
 }
 
 h2 {
@@ -163,6 +226,102 @@ h2 {
 .secondary-button {
   margin-top: 10px;
   width: 100%;
+}
+
+.command-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.command-stack .secondary-button {
+  margin-top: 0;
+}
+
+.secondary-button.danger {
+  color: #b42318;
+  border-color: #f4b5ad;
+}
+
+.file-command {
+  cursor: pointer;
+}
+
+.full-width {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.compact-button {
+  border: 1px solid #cbd5e1;
+  background: white;
+  color: #263449;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.tool-grid .icon-button {
+  width: 100%;
+}
+
+.route-library {
+  display: grid;
+  gap: 8px;
+}
+
+.route-row {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #dbe3ee;
+  background: #ffffff;
+  color: #263449;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.route-row svg {
+  width: 17px;
+  height: 17px;
+}
+
+.route-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.route-row small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.route-row.selected {
+  border-color: #155eef;
+  box-shadow: inset 3px 0 0 #155eef;
+}
+
+.error-text {
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 8px 0 0;
 }
 
 .agv-row {
@@ -216,6 +375,7 @@ h2 {
   min-width: 0;
   min-height: 0;
   padding: 14px;
+  position: relative;
 }
 
 .map-svg {
@@ -227,24 +387,44 @@ h2 {
   touch-action: none;
 }
 
+.canvas-controls {
+  position: absolute;
+  right: 26px;
+  bottom: 26px;
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px;
+  background: rgb(255 255 255 / 0.92);
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.12);
+}
+
 .edge {
   stroke: #475569;
-  stroke-width: 0.08;
+  stroke-width: 0.09;
   marker-end: url("#arrow");
   cursor: pointer;
+}
+
+.edge.subtle {
+  stroke: #94a3b8;
+  stroke-width: 0.055;
+  opacity: 0.52;
 }
 
 .edge.active {
   stroke: #155eef;
   stroke-width: 0.12;
+  opacity: 1;
 }
 
 .edge.route {
   stroke: #16a34a;
-  stroke-width: 0.12;
+  stroke-width: 0.16;
+  opacity: 1;
 }
 
-.edge-label,
 .node-label,
 .agv-label {
   font-size: 0.33px;
@@ -259,6 +439,11 @@ h2 {
   cursor: grab;
 }
 
+.node.subtle {
+  stroke: #94a3b8;
+  opacity: 0.58;
+}
+
 .node.active,
 .node.edge-start {
   fill: #dbeafe;
@@ -268,6 +453,8 @@ h2 {
 .node.route {
   fill: #dcfce7;
   stroke: #16a34a;
+  stroke-width: 0.12;
+  opacity: 1;
 }
 
 .agv-marker {
@@ -296,6 +483,21 @@ h2 {
   color: #46566d;
 }
 
+.property-row {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #46566d;
+}
+
+.property-row strong {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
 .field input,
 .field select {
   height: 34px;
@@ -314,6 +516,50 @@ h2 {
   font-size: 13px;
   color: #46566d;
   margin: 12px 0;
+}
+
+.tracking-row {
+  background: white;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.tracking-row + .tracking-row {
+  margin-top: 10px;
+}
+
+.tracking-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tracking-title svg {
+  width: 16px;
+  height: 16px;
+}
+
+.tracking-row dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.tracking-row dt {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.tracking-row dd {
+  margin: 2px 0 0;
+  color: #263449;
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (max-width: 980px) {

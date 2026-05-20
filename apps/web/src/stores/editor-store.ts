@@ -9,28 +9,34 @@ import {
   type MapEdge,
   type MapNode,
 } from "@agv/core";
+import type { CanvasBounds } from "../lib/geometry";
+import type { Tool, WorkspaceMode } from "../types";
 
-export type Tool = "select" | "node" | "edge" | "route";
 export type Selection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
 
 export interface EditorState {
   map: MapDocument;
+  workspaceMode: WorkspaceMode;
   tool: Tool;
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   dragNodeId: string | null;
+  viewport: CanvasBounds | null;
   status: string;
   setStatus: (status: string) => void;
   setMapDocument: (map: MapDocument, status?: string) => void;
   updateMap: (updater: (map: MapDocument) => MapDocument) => void;
   renameMap: (name: string) => void;
+  setWorkspaceMode: (workspaceMode: WorkspaceMode) => void;
   setTool: (tool: Tool) => void;
+  setViewport: (viewport: CanvasBounds | null) => void;
   clearSelection: () => void;
   selectNode: (nodeId: string) => void;
   selectEdge: (edgeId: string) => void;
   addNodeAt: (x: number, y: number) => void;
   handleEdgeNode: (nodeId: string) => void;
+  addReverseEdgeForSelection: () => void;
   addRouteNode: (nodeId: string) => void;
   beginDragNode: (nodeId: string) => void;
   dragNodeTo: (x: number, y: number) => void;
@@ -43,11 +49,13 @@ export interface EditorState {
 
 export const useEditorStore = create<EditorState>((set) => ({
   map: createDemoMap(),
+  workspaceMode: "map",
   tool: "select",
   selection: null,
   edgeStartNodeId: null,
   routeNodeIds: [],
   dragNodeId: null,
+  viewport: null,
   status: "Loading map...",
 
   setStatus: (status) => set({ status }),
@@ -58,6 +66,7 @@ export const useEditorStore = create<EditorState>((set) => ({
     edgeStartNodeId: null,
     routeNodeIds: [],
     dragNodeId: null,
+    viewport: null,
     ...(status !== undefined ? { status } : {}),
   }),
 
@@ -77,7 +86,23 @@ export const useEditorStore = create<EditorState>((set) => ({
     },
   })),
 
-  setTool: (tool) => set({ tool, edgeStartNodeId: null }),
+  setWorkspaceMode: (workspaceMode) => set({
+    workspaceMode,
+    tool: "select",
+    selection: null,
+    edgeStartNodeId: null,
+    dragNodeId: null,
+  }),
+
+  setTool: (tool) => set({
+    tool,
+    selection: null,
+    edgeStartNodeId: null,
+    dragNodeId: null,
+  }),
+
+  setViewport: (viewport) => set({ viewport }),
+
   clearSelection: () => set({ selection: null, edgeStartNodeId: null }),
   selectNode: (nodeId) => set({ selection: { type: "node", id: nodeId } }),
   selectEdge: (edgeId) => set({ selection: { type: "edge", id: edgeId } }),
@@ -85,6 +110,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   addNodeAt: (x, y) => set((state) => {
     const id = nextNodeId(state.map);
     return {
+      selection: { type: "node", id },
       map: {
         ...state.map,
         nodes: [...state.map.nodes, { id, label: id, x, y }],
@@ -108,6 +134,7 @@ export const useEditorStore = create<EditorState>((set) => ({
 
     return {
       edgeStartNodeId: null,
+      selection: { type: "edge", id: nextEdgeId(state.map, edgeStartNodeId, nodeId) },
       map: {
         ...state.map,
         edges: [
@@ -124,6 +151,42 @@ export const useEditorStore = create<EditorState>((set) => ({
         ],
         updatedAt: new Date().toISOString(),
       },
+    };
+  }),
+
+  addReverseEdgeForSelection: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const edge = state.map.edges.find((item) => item.id === state.selection?.id);
+    if (!edge) return {};
+    const reverse = findEdge(state.map, edge.to, edge.from);
+    if (reverse) {
+      return {
+        selection: { type: "edge", id: reverse.id },
+        status: `Reverse edge ${reverse.id} already exists.`,
+      };
+    }
+    const id = nextEdgeId(state.map, edge.to, edge.from);
+    return {
+      selection: { type: "edge", id },
+      map: {
+        ...state.map,
+        edges: [
+          ...state.map.edges,
+          {
+            id,
+            label: `${edge.to} -> ${edge.from}`,
+            from: edge.to,
+            to: edge.from,
+            ...(edge.maxSpeed !== undefined ? { maxSpeed: edge.maxSpeed } : {}),
+            ...(edge.orientation !== undefined ? { orientation: edge.orientation } : {}),
+            orientationType: edge.orientationType,
+            rotationAllowed: edge.rotationAllowed,
+            trajectory: null,
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      },
+      status: `Added reverse edge ${id}.`,
     };
   }),
 
