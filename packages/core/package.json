@@ -16,6 +16,7 @@
     "dev": "concurrently -n types,bundle -c cyan,blue \"tsc -p tsconfig.json --emitDeclarationOnly --watch --preserveWatchOutput\" \"node ../../scripts/bundle-package.mjs src/index.ts dist/index.js neutral --watch\""
   },
   "dependencies": {
-    "vda-5050-lib": "^1.7.0"
+    "vda-5050-lib": "^1.7.0",
+    "vdma-lif": "^1.0.0-7"
   }
 }

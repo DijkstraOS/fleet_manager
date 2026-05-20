@@ -19,7 +19,7 @@ The server runs on `http://localhost:4000`, WebSocket on `/ws`, and the embedded
 - `apps/web`: React/Vite SVG map editor and live simulator view.
 - `apps/server`: Fastify API, WebSocket hub, embedded MQTT broker, and `vda-5050-lib` master-control client.
 - `apps/simulator`: dummy AGV runtime using `vda-5050-lib` AGV clients plus simulator motion/state logic.
-- `packages/core`: map, LIF, and VDA 5050 v2.1 order domain logic.
+- `packages/core`: map, `vdma-lif`-validated LIF import/export, and VDA 5050 v2.1 order domain logic.
 
 ## Verify
 
@@ -35,7 +35,7 @@ If this is the first Playwright run on a machine, install Chromium once with `np
 
 - Custom SVG grid map editor.
 - Directed nodes and edges.
-- LIF import/export with trajectory data preserved but not edited.
+- LIF import/export validated with `vdma-lif`; trajectory and unmodeled external fields are preserved where possible but not fully edited.
 - Dummy AGV simulator over MQTT.
 - REST order creation and WebSocket realtime updates.
 
