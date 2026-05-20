@@ -1,4 +1,14 @@
-import type { LifDocument, MapDocument, OrderDraft, RouteDocument, VdaOrder, VdaState, VdaVisualization } from "@agv/core";
+import type {
+  ConnectionStatus,
+  LifDocument,
+  MapDocument,
+  OrderDraft,
+  RouteDocument,
+  VdaOrder,
+  VdaPublishedOrder,
+  VdaState,
+  VdaVisualization,
+} from "@agv/core";
 
 export interface MapSummary {
   id: string;
@@ -30,7 +40,7 @@ export interface KnownAgv {
   serialNumber: string;
   manufacturer: string;
   mapId: string | null;
-  connectionState: "ONLINE" | "OFFLINE" | null;
+  connectionState: ConnectionStatus | null;
   state: VdaState | null;
   visualization: VdaVisualization | null;
   lastSeenAt: string;
@@ -39,7 +49,7 @@ export interface KnownAgv {
 export interface FleetGateway {
   listAgvs: () => KnownAgv[];
   getAgv: (serialNumber: string) => KnownAgv | undefined;
-  publishOrder: (agv: KnownAgv, order: VdaOrder) => void;
+  publishOrder: (agv: KnownAgv, order: VdaOrder) => Promise<VdaPublishedOrder | undefined>;
   start: () => Promise<void>;
   close: () => Promise<void>;
 }
@@ -59,7 +69,7 @@ export interface OrderResult {
   orderId: string;
   serialNumber: string;
   timestamp: string;
-  order: VdaOrder;
+  order: VdaOrder | VdaPublishedOrder;
   routeId?: string;
   routeName?: string;
 }
@@ -84,5 +94,5 @@ export interface FleetHandlers {
 }
 
 export interface OrderHandlers {
-  sendOrder: (draft: OrderDraft) => OrderResult;
+  sendOrder: (draft: OrderDraft) => Promise<OrderResult>;
 }

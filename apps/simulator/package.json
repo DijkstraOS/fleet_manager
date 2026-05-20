@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@agv/core": "file:../../packages/core",
-    "mqtt": "^5.10.4"
+    "mqtt": "^5.10.4",
+    "vda-5050-lib": "^1.7.0"
   }
 }

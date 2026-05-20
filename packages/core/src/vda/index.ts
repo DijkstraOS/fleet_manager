@@ -40,7 +40,7 @@ export function buildVdaOrder(map: MapDocument, draft: OrderDraft, orderId = mak
       endNodeId: to,
       ...(edge.maxSpeed !== undefined ? { maxSpeed: edge.maxSpeed } : {}),
       ...(edge.orientation !== undefined ? { orientation: edge.orientation } : {}),
-      orientationType: edge.orientationType,
+      orientationType: toVdaOrientationType(edge.orientationType),
       rotationAllowed: edge.rotationAllowed,
       ...(edge.trajectory ? { trajectory: edge.trajectory } : {}),
       actions: [],
@@ -59,6 +59,10 @@ export function makeOrderId(date = new Date()): string {
   return `order-${date.toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`;
 }
 
+function toVdaOrientationType(value: "GLOBAL" | "TANGENTIAL"): NonNullable<VdaOrderEdge["orientationType"]> {
+  return value as NonNullable<VdaOrderEdge["orientationType"]>;
+}
+
 export type {
   ConnectionStatus,
   EStopType,
@@ -67,6 +71,12 @@ export type {
   VdaOrder,
   VdaOrderEdge,
   VdaOrderNode,
+  VdaPublishedOrder,
+  VdaConnection,
+  VdaConnectionDraft,
   VdaState,
+  VdaStateDraft,
   VdaVisualization,
+  VdaVisualizationDraft,
 } from "./types";
+export { VDA_5050_VERSION } from "./types";

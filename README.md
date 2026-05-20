@@ -1,6 +1,6 @@
 # AGV Map Simulator MVP
 
-Lean TypeScript MVP for creating a VDA-shaped AGV map, running a dummy AGV, sending an order, and watching the AGV move.
+Lean TypeScript MVP for creating a VDA 5050 v2.1 AGV map flow, running a dummy AGV, sending an order, and watching the AGV move.
 
 ## Run
 
@@ -17,9 +17,9 @@ The server runs on `http://localhost:4000`, WebSocket on `/ws`, and the embedded
 ## Workspace
 
 - `apps/web`: React/Vite SVG map editor and live simulator view.
-- `apps/server`: Fastify API, WebSocket hub, and embedded MQTT broker.
-- `apps/simulator`: dummy VDA AGV client and simulator motion/state logic.
-- `packages/core`: map, LIF, and VDA order domain logic.
+- `apps/server`: Fastify API, WebSocket hub, embedded MQTT broker, and `vda-5050-lib` master-control client.
+- `apps/simulator`: dummy AGV runtime using `vda-5050-lib` AGV clients plus simulator motion/state logic.
+- `packages/core`: map, LIF, and VDA 5050 v2.1 order domain logic.
 
 ## Verify
 

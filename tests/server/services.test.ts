@@ -40,10 +40,10 @@ describe("server services", () => {
     expect(handlers.listAgvs()).toEqual([knownAgv]);
   });
 
-  it("builds and publishes an order through the fleet gateway", () => {
+  it("builds and publishes an order through the fleet gateway", async () => {
     const handlers = createOrderHandlers(createRepository(), fleet, realtime);
 
-    const result = handlers.sendOrder({
+    const result = await handlers.sendOrder({
       mapId: map.id,
       agvSerialNumber: "SIM-001",
       routeNodeIds: ["dock-a", "corr-1"],
@@ -76,11 +76,11 @@ describe("server services", () => {
     expect(realtimeMessages[1]?.type).toBe("route_deleted");
   });
 
-  it("enriches order status with saved route metadata", () => {
+  it("enriches order status with saved route metadata", async () => {
     const tracker = createOrderTracker();
     const handlers = createOrderHandlers(createRepository(), fleet, realtime, tracker);
 
-    const result = handlers.sendOrder({
+    const result = await handlers.sendOrder({
       mapId: map.id,
       agvSerialNumber: "SIM-001",
       routeNodeIds: ["dock-a", "corr-1"],
@@ -103,8 +103,9 @@ const realtime = {
 const fleet: FleetGateway = {
   listAgvs: () => [knownAgv],
   getAgv: (serialNumber) => serialNumber === knownAgv.serialNumber ? knownAgv : undefined,
-  publishOrder: (_agv, order) => {
+  publishOrder: async (_agv, order) => {
     sentOrder = order;
+    return undefined;
   },
   start: async () => {},
   close: async () => {},

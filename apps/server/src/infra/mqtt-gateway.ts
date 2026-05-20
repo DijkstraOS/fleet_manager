@@ -2,7 +2,8 @@ import { createRequire } from "node:module";
 import net from "node:net";
 import mqtt, { type MqttClient } from "mqtt";
 import type { createBroker as createBrokerType } from "aedes";
-import type { VdaOrder, VdaState, VdaVisualization } from "@agv/core";
+import { VDA_5050_VERSION, type ConnectionStatus, type VdaOrder, type VdaPublishedOrder, type VdaState, type VdaVisualization } from "@agv/core";
+import { ConnectionState as VdaConnectionState, MasterControlClient, Topic, type AgvId } from "vda-5050-lib";
 import type { FleetGateway, KnownAgv } from "../domain/ports";
 
 const require = createRequire(import.meta.url);
@@ -25,7 +26,8 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
   const broker = createBroker();
   const brokerServer = net.createServer(broker.handle);
   const agvs = new Map<string, KnownAgv>();
-  let client: MqttClient | null = null;
+  let masterClient: MasterControlClient | null = null;
+  let statusClient: MqttClient | null = null;
   let started = false;
 
   function parse(payload: Buffer): Record<string, unknown> {
@@ -36,58 +38,33 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
     }
   }
 
-  function publish(topic: string, value: unknown) {
-    if (!client) throw new Error("MQTT client is not connected.");
-    client.publish(topic, JSON.stringify(value), { qos: 0 });
-  }
-
-  function handleMessage(topic: string, payload: Buffer) {
-    const parts = topic.split("/");
+  function handleStatusMessage(topic: string, payload: Buffer) {
     if (topic === `${options.interfaceName}/server/order-status`) {
       options.onOrderStatus(parse(payload));
-      return;
     }
-    if (parts.length < 5 || parts[0] !== options.interfaceName || parts[1] !== "v2") return;
+  }
 
-    const manufacturer = parts[2];
-    const serialNumber = parts[3];
-    const kind = parts[4];
-    if (!manufacturer || !serialNumber || !kind) return;
-
-    const existing = agvs.get(serialNumber);
+  function upsertAgv(subject: AgvId): KnownAgv {
+    const existing = agvs.get(subject.serialNumber);
     const agv: KnownAgv = existing || {
-      serialNumber,
-      manufacturer,
+      serialNumber: subject.serialNumber,
+      manufacturer: subject.manufacturer,
       mapId: null,
       connectionState: null,
       state: null,
       visualization: null,
       lastSeenAt: new Date().toISOString(),
     };
+    agv.manufacturer = subject.manufacturer;
     agv.lastSeenAt = new Date().toISOString();
+    agvs.set(subject.serialNumber, agv);
+    return agv;
+  }
 
-    if (kind === "state") {
-      const state = parse(payload) as unknown as VdaState;
-      agv.state = state;
-      agv.mapId = state.agvPosition.mapId || agv.mapId;
-      agvs.set(serialNumber, agv);
-      options.onAgvState(agv);
-    }
-
-    if (kind === "visualization") {
-      const visualization = parse(payload) as unknown as VdaVisualization;
-      agv.visualization = visualization;
-      agv.mapId = visualization.agvPosition.mapId || agv.mapId;
-      agvs.set(serialNumber, agv);
-      options.onAgvVisualization(agv);
-    }
-
-    if (kind === "connection") {
-      const connection = parse(payload);
-      agv.connectionState = connection.connectionState === "OFFLINE" ? "OFFLINE" : "ONLINE";
-      agvs.set(serialNumber, agv);
-      options.onAgvState(agv);
-    }
+  function toConnectionStatus(state: VdaConnectionState): ConnectionStatus {
+    if (state === VdaConnectionState.Offline) return "OFFLINE";
+    if (state === VdaConnectionState.Connectionbroken) return "CONNECTIONBROKEN";
+    return "ONLINE";
   }
 
   return {
@@ -103,31 +80,48 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
         });
       });
 
-      client = mqtt.connect(brokerUrl, { clientId: "agv-server-master" });
-      await new Promise<void>((resolve, reject) => {
-        if (!client) return reject(new Error("MQTT client not initialized."));
-        client.once("connect", () => resolve());
-        client.once("error", reject);
+      masterClient = new MasterControlClient({
+        interfaceName: options.interfaceName,
+        transport: {
+          brokerUrl,
+          clientId: "agv-server-master",
+          reconnectPeriod: 1000,
+        },
+        vdaVersion: VDA_5050_VERSION,
       });
 
-      client.subscribe(`${options.interfaceName}/v2/+/+/state`);
-      client.subscribe(`${options.interfaceName}/v2/+/+/visualization`);
-      client.subscribe(`${options.interfaceName}/v2/+/+/connection`);
-      client.subscribe(`${options.interfaceName}/server/order-status`);
-      client.on("message", handleMessage);
+      masterClient.trackAgvs((subject, state) => {
+        const agv = upsertAgv(subject);
+        agv.connectionState = toConnectionStatus(state);
+        options.onAgvState(agv);
+      });
+      await masterClient.start();
+      await masterClient.subscribe(Topic.State, {}, (state, subject) => {
+        const agv = upsertAgv(subject);
+        agv.state = state as VdaState;
+        agv.mapId = state.agvPosition?.mapId || agv.mapId;
+        options.onAgvState(agv);
+      });
+      await masterClient.subscribe(Topic.Visualization, {}, (visualization, subject) => {
+        const agv = upsertAgv(subject);
+        agv.visualization = visualization as VdaVisualization;
+        agv.mapId = visualization.agvPosition?.mapId || agv.mapId;
+        options.onAgvVisualization(agv);
+      });
+
+      statusClient = mqtt.connect(brokerUrl, { clientId: "agv-server-status", reconnectPeriod: 1000 });
+      await connectMqtt(statusClient);
+      await subscribeMqtt(statusClient, `${options.interfaceName}/server/order-status`);
+      statusClient.on("message", handleStatusMessage);
     },
 
     close: async () => {
-      const activeClient = client;
-      client = null;
-      if (activeClient) {
-        await new Promise<void>((resolve, reject) => {
-          activeClient.end(true, (error) => {
-            if (error) reject(error);
-            else resolve();
-          });
-        });
-      }
+      const activeStatusClient = statusClient;
+      statusClient = null;
+      if (activeStatusClient) await closeMqtt(activeStatusClient);
+      const activeMasterClient = masterClient;
+      masterClient = null;
+      if (activeMasterClient) await activeMasterClient.stop();
       if (started) {
         await new Promise<void>((resolve, reject) => {
           brokerServer.close((error) => {
@@ -144,8 +138,37 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
 
     listAgvs: () => Array.from(agvs.values()),
     getAgv: (serialNumber) => agvs.get(serialNumber),
-    publishOrder: (agv: KnownAgv, order: VdaOrder) => {
-      publish(`${options.interfaceName}/v2/${agv.manufacturer}/${agv.serialNumber}/order`, order);
+    publishOrder: async (agv: KnownAgv, order: VdaOrder): Promise<VdaPublishedOrder | undefined> => {
+      if (!masterClient) throw new Error("VDA 5050 master control client is not connected.");
+      return masterClient.publish(Topic.Order, {
+        manufacturer: agv.manufacturer,
+        serialNumber: agv.serialNumber,
+      }, order);
     },
   };
+}
+
+function connectMqtt(client: MqttClient): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.once("connect", () => resolve());
+    client.once("error", reject);
+  });
+}
+
+function subscribeMqtt(client: MqttClient, topic: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.subscribe(topic, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+function closeMqtt(client: MqttClient): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.end(true, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }

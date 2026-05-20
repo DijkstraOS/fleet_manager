@@ -15,6 +15,7 @@
     "aedes": "^0.51.3",
     "fastify": "^5.3.2",
     "mqtt": "^5.10.4",
+    "vda-5050-lib": "^1.7.0",
     "ws": "^8.18.2"
   },
   "devDependencies": {

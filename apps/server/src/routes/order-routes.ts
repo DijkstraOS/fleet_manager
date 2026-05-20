@@ -6,7 +6,7 @@ import { isServiceError } from "../services/order-service";
 export function registerOrderRoutes(fastify: FastifyInstance, orders: OrderHandlers) {
   fastify.post<{ Body: OrderDraft }>("/api/orders", async (request, reply) => {
     try {
-      const result = orders.sendOrder(request.body);
+      const result = await orders.sendOrder(request.body);
       return { ok: true, order: result.order };
     } catch (error) {
       if (isServiceError(error)) {

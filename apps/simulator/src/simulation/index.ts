@@ -1,4 +1,5 @@
-import { findNode, type MapDocument, type VdaOrder, type VdaState, type VdaVisualization } from "@agv/core";
+import { EStop, OperatingMode } from "vda-5050-lib";
+import { findNode, type MapDocument, type VdaOrder, type VdaStateDraft, type VdaVisualizationDraft } from "@agv/core";
 import type { SimulatedAgv } from "./types";
 
 export function createSimulatedAgv(params: {
@@ -53,9 +54,11 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
 
   const target = agv.remainingNodes[0];
   if (!target) return agv;
+  const targetPosition = target.nodePosition;
+  if (!targetPosition) return { ...agv, driving: false };
 
-  const dx = target.nodePosition.x - agv.x;
-  const dy = target.nodePosition.y - agv.y;
+  const dx = targetPosition.x - agv.x;
+  const dy = targetPosition.y - agv.y;
   const distance = Math.hypot(dx, dy);
   const activeEdge = agv.remainingEdges[0];
   const maxSpeed = activeEdge?.maxSpeed || agv.speedMetersPerSecond;
@@ -69,9 +72,9 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
     return {
       ...agv,
       currentNodeId: target.nodeId,
-      x: target.nodePosition.x,
-      y: target.nodePosition.y,
-      theta: target.nodePosition.theta ?? agv.theta,
+      x: targetPosition.x,
+      y: targetPosition.y,
+      theta: targetPosition.theta ?? agv.theta,
       batteryCharge: Math.max(0, agv.batteryCharge - 0.02),
       currentOrder: orderComplete ? null : agv.currentOrder,
       remainingNodes,
@@ -91,7 +94,7 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
   };
 }
 
-export function buildState(agv: SimulatedAgv): VdaState {
+export function buildState(agv: SimulatedAgv): VdaStateDraft {
   return {
     orderId: agv.currentOrder?.orderId || "",
     orderUpdateId: agv.currentOrder?.orderUpdateId || 0,
@@ -99,12 +102,12 @@ export function buildState(agv: SimulatedAgv): VdaState {
     lastNodeSequenceId: 0,
     driving: agv.driving,
     paused: false,
-    operatingMode: "AUTOMATIC",
+    operatingMode: OperatingMode.Automatic,
     nodeStates: agv.remainingNodes.map((node) => ({
       nodeId: node.nodeId,
       sequenceId: node.sequenceId,
       released: node.released,
-      nodePosition: node.nodePosition,
+      ...(node.nodePosition ? { nodePosition: node.nodePosition } : {}),
     })),
     edgeStates: agv.remainingEdges.map((edge) => ({
       edgeId: edge.edgeId,
@@ -130,14 +133,14 @@ export function buildState(agv: SimulatedAgv): VdaState {
     },
     errors: [],
     safetyState: {
-      eStop: "NONE",
+      eStop: EStop.None,
       fieldViolation: false,
     },
     information: [],
   };
 }
 
-export function buildVisualization(agv: SimulatedAgv): VdaVisualization {
+export function buildVisualization(agv: SimulatedAgv): VdaVisualizationDraft {
   return {
     agvPosition: {
       x: agv.x,

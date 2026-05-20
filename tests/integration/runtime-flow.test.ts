@@ -43,12 +43,21 @@ test("creates a map, starts a simulator AGV client, sends an order, and complete
 
     const idle = await waitForAgv(apiBase, (agv) => agv.state?.driving === false);
     expect(idle.state?.lastNodeId).toBe("dock-a");
+    expect(idle.state?.version).toBe("2.1.0");
+    expect(idle.state?.manufacturer).toBe("DijkstraSim");
+    expect(idle.state?.serialNumber).toBe("SIM-001");
+    expect(typeof idle.state?.headerId).toBe("number");
 
-    await postJson(`${apiBase}/api/orders`, {
+    const orderResponse = await postJson(`${apiBase}/api/orders`, {
       mapId: map.id,
       agvSerialNumber: "SIM-001",
       routeNodeIds: ["dock-a", "corr-1", "corr-2"],
     });
+    const sentOrder = (orderResponse as OrderResponse).order;
+    expect(sentOrder.version).toBe("2.1.0");
+    expect(sentOrder.manufacturer).toBe("DijkstraSim");
+    expect(sentOrder.serialNumber).toBe("SIM-001");
+    expect(typeof sentOrder.headerId).toBe("number");
 
     const driving = await waitForAgv(apiBase, (agv) => agv.state?.driving === true);
     expect(driving.state?.orderId).toContain("order-");
@@ -113,8 +122,22 @@ async function getFreePort() {
 interface RuntimeAgv {
   serialNumber: string;
   state?: {
+    headerId: number;
+    version: string;
+    manufacturer: string;
+    serialNumber: string;
     orderId: string;
     lastNodeId: string;
     driving: boolean;
+  };
+}
+
+interface OrderResponse {
+  ok: boolean;
+  order: {
+    headerId: number;
+    version: string;
+    manufacturer: string;
+    serialNumber: string;
   };
 }

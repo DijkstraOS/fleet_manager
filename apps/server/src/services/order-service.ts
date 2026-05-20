@@ -33,7 +33,7 @@ export function createOrderHandlers(
   orderTracker?: OrderTracker
 ): OrderHandlers {
   return {
-    sendOrder: (draft) => {
+    sendOrder: async (draft) => {
       const map = maps.get(draft.mapId);
       if (!map) throw createServiceError(404, "Map not found.");
 
@@ -47,7 +47,7 @@ export function createOrderHandlers(
           ...(draft.routeName ? { routeName: draft.routeName } : {}),
         };
         orderTracker?.remember(order.orderId, metadata);
-        fleet.publishOrder(agv, order);
+        const publishedOrder = await fleet.publishOrder(agv, order);
         const payload = {
           status: "sent" as const,
           orderId: order.orderId,
@@ -56,7 +56,7 @@ export function createOrderHandlers(
           ...metadata,
         };
         realtime.broadcast({ type: "order_status", ...payload });
-        return { ...payload, order };
+        return { ...payload, order: publishedOrder || order };
       } catch (error) {
         throw createServiceError(400, error instanceof Error ? error.message : "Invalid order.");
       }
