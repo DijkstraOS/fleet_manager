@@ -8,8 +8,9 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "npm run dev",
     "build": "npm run build -w @agv/core && npm run build -w @agv/server && npm run build -w @agv/simulator && npm run build -w @agv/web",
-    "dev": "concurrently -n core,server,sim,web -c cyan,green,yellow,magenta \"npm run dev -w @agv/core\" \"npm run dev -w @agv/server\" \"npm run dev -w @agv/simulator\" \"npm run dev -w @agv/web\"",
+    "dev": "npm run build -w @agv/core && concurrently -n core,server,sim,web -c cyan,green,yellow,magenta \"npm run dev -w @agv/core\" \"npm run dev -w @agv/server\" \"npm run dev -w @agv/simulator\" \"npm run dev -w @agv/web\"",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "architecture:check": "node scripts/check-architecture.mjs"

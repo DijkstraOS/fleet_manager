@@ -141,7 +141,7 @@ function exportLifEdge(edge: MapEdge): LifEdge {
 
 function parseLifDocument(input: unknown): LifDocument {
   try {
-    const json = typeof input === "string" ? input : JSON.stringify(input);
+    const json = toLifJson(input);
     const lif = LIFParser.fromJson(json);
     if (!lif || !Array.isArray(lif.layouts) || lif.layouts.length === 0) {
       throw new Error("LIF document must contain at least one layout.");
@@ -151,6 +151,23 @@ function parseLifDocument(input: unknown): LifDocument {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid LIF document: ${message}`);
   }
+}
+
+function toLifJson(input: unknown): string {
+  const value = typeof input === "string" ? JSON.parse(input) : input;
+  return JSON.stringify(normalizeLifInput(value));
+}
+
+function normalizeLifInput(input: unknown): unknown {
+  if (!isRecord(input) || !isRecord(input.metaInformation)) return input;
+  if (input.metaInformation.exportTimestamp !== "") return input;
+  return {
+    ...input,
+    metaInformation: {
+      ...input.metaInformation,
+      exportTimestamp: null,
+    },
+  };
 }
 
 function mergeNodeVehicleProperties(preserved: LifVehicleTypeNodeProperty[], node: MapNode): LifVehicleTypeNodeProperty[] {

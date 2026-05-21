@@ -4,15 +4,23 @@ Lean TypeScript MVP for creating a VDA 5050 v2.1 AGV map flow, running a dummy A
 
 ## Run
 
+First-time setup:
+
 ```bash
 npm install
-npm run build
-npm run dev
+```
+
+Run the system:
+
+```bash
+npm start
 ```
 
 Open `http://localhost:5173`.
 
-The server runs on `http://localhost:4000`, WebSocket on `/ws`, and the embedded MQTT broker on `mqtt://127.0.0.1:1883`.
+After setup, `npm start` is the single command to run the system.
+
+That command starts the web app, API server, embedded MQTT broker, and dummy AGV simulator together. The server runs on `http://localhost:4000`, WebSocket on `/ws`, and the embedded MQTT broker on `mqtt://127.0.0.1:1883`.
 
 ## Workspace
 

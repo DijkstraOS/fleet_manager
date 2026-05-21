@@ -162,6 +162,45 @@ describe("LIF import/export", () => {
     expect(layout.edges[0]?.vehicleTypeEdgeProperties[1]?.vehicleTypeId).toBe("tugger");
   });
 
+  it("imports external LIF files with blank export timestamps", () => {
+    const imported = importLifDocument({
+      metaInformation: {
+        projectIdentification: "External Layout",
+        creator: "",
+        exportTimestamp: "",
+        lifVersion: "1.0.0",
+      },
+      layouts: [{
+        layoutId: "entry",
+        layoutName: "Entry",
+        layoutVersion: "1",
+        nodes: [{
+          nodeId: "n1",
+          nodeName: "n1",
+          nodePosition: { x: -24.931, y: 3.06 },
+          vehicleTypeNodeProperties: [],
+        }, {
+          nodeId: "n2",
+          nodeName: "n2",
+          nodePosition: { x: -15.3, y: 21.42 },
+          vehicleTypeNodeProperties: [],
+        }],
+        edges: [{
+          edgeId: "n1_n2",
+          edgeName: "n1_n2",
+          startNodeId: "n1",
+          endNodeId: "n2",
+          vehicleTypeEdgeProperties: [],
+        }],
+        stations: [],
+      }],
+    });
+
+    expect(imported.id).toBe("entry");
+    expect(imported.nodes).toHaveLength(2);
+    expect(imported.edges).toHaveLength(1);
+  });
+
   it("rejects documents that do not match the vdma-lif model", () => {
     expect(() => importLifDocument({ layouts: [] })).toThrow(/Invalid LIF document/);
   });

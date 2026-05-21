@@ -9,6 +9,7 @@ import { useEditorStore } from "../stores/editor-store";
 export function useMapCommands() {
   const map = useEditorStore((state) => state.map);
   const setMapDocument = useEditorStore((state) => state.setMapDocument);
+  const setStatus = useEditorStore((state) => state.setStatus);
 
   return {
     saveMap: async () => {
@@ -20,8 +21,12 @@ export function useMapCommands() {
       downloadJson(`${map.id}.lif.json`, lif);
     },
     importMap: async (file: File) => {
-      const imported = importLifDocument(JSON.parse(await file.text()));
-      setMapDocument(imported, `Imported ${imported.name}.`);
+      try {
+        const imported = importLifDocument(JSON.parse(await file.text()));
+        setMapDocument(imported, `Imported ${imported.name}.`);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Import failed.");
+      }
     },
   };
 }
