@@ -9,15 +9,31 @@ import {
   type MapEdge,
   type MapNode,
 } from "@agv/core";
-import type { CanvasBounds } from "../lib/geometry";
+import { fitRectToBounds, getNodeBounds, type CanvasBounds } from "../lib/geometry";
+import type { BackgroundImageMediaType, ReadBackgroundImage } from "../lib/background-image";
 import type { Tool, WorkspaceMode } from "../types";
 
 export type Selection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
+
+export interface EditorBackgroundImage {
+  src: string;
+  fileName: string;
+  mediaType: BackgroundImageMediaType;
+  naturalWidth: number;
+  naturalHeight: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  locked: boolean;
+}
 
 export interface EditorState {
   map: MapDocument;
   workspaceMode: WorkspaceMode;
   tool: Tool;
+  backgroundImage: EditorBackgroundImage | null;
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
@@ -25,7 +41,7 @@ export interface EditorState {
   viewport: CanvasBounds | null;
   status: string;
   setStatus: (status: string) => void;
-  setMapDocument: (map: MapDocument, status?: string) => void;
+  setMapDocument: (map: MapDocument, status?: string, options?: { preserveBackground?: boolean }) => void;
   updateMap: (updater: (map: MapDocument) => MapDocument) => void;
   renameMap: (name: string) => void;
   setWorkspaceMode: (workspaceMode: WorkspaceMode) => void;
@@ -37,6 +53,12 @@ export interface EditorState {
   addNodeAt: (x: number, y: number) => void;
   handleEdgeNode: (nodeId: string) => void;
   addReverseEdgeForSelection: () => void;
+  attachBackgroundImage: (image: ReadBackgroundImage) => void;
+  updateBackgroundImage: (updater: (backgroundImage: EditorBackgroundImage) => EditorBackgroundImage) => void;
+  fitBackgroundImageToMap: () => void;
+  setBackgroundImageOpacity: (opacity: number) => void;
+  setBackgroundImageLocked: (locked: boolean) => void;
+  removeBackgroundImage: () => void;
   addRouteNode: (nodeId: string) => void;
   beginDragNode: (nodeId: string) => void;
   dragNodeTo: (x: number, y: number) => void;
@@ -51,6 +73,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   map: createDemoMap(),
   workspaceMode: "map",
   tool: "select",
+  backgroundImage: null,
   selection: null,
   edgeStartNodeId: null,
   routeNodeIds: [],
@@ -60,15 +83,16 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   setStatus: (status) => set({ status }),
 
-  setMapDocument: (map, status) => set({
+  setMapDocument: (map, status, options) => set((state) => ({
     map,
+    backgroundImage: options?.preserveBackground ? state.backgroundImage : null,
     selection: null,
     edgeStartNodeId: null,
     routeNodeIds: [],
     dragNodeId: null,
     viewport: null,
     ...(status !== undefined ? { status } : {}),
-  }),
+  })),
 
   updateMap: (updater) => set((state) => ({
     map: {
@@ -190,6 +214,73 @@ export const useEditorStore = create<EditorState>((set) => ({
     };
   }),
 
+  attachBackgroundImage: (image) => set((state) => {
+    const naturalWidth = positiveOr(image.naturalWidth, 100);
+    const naturalHeight = positiveOr(image.naturalHeight, 100);
+    const placement = fitRectToBounds(getNodeBounds(state.map), naturalWidth, naturalHeight);
+    return {
+      tool: "background",
+      selection: null,
+      edgeStartNodeId: null,
+      backgroundImage: {
+        src: image.src,
+        fileName: image.fileName,
+        mediaType: image.mediaType,
+        naturalWidth,
+        naturalHeight,
+        ...placement,
+        opacity: 0.65,
+        locked: false,
+      },
+      status: `Added background image ${image.fileName}.`,
+    };
+  }),
+
+  updateBackgroundImage: (updater) => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: normalizeBackgroundImage(updater(state.backgroundImage)),
+    };
+  }),
+
+  fitBackgroundImageToMap: () => set((state) => {
+    const backgroundImage = state.backgroundImage;
+    if (!backgroundImage) return {};
+    const placement = fitRectToBounds(
+      getNodeBounds(state.map),
+      backgroundImage.naturalWidth,
+      backgroundImage.naturalHeight
+    );
+    return {
+      backgroundImage: normalizeBackgroundImage({ ...backgroundImage, ...placement }),
+      status: "Fit background image to map.",
+    };
+  }),
+
+  setBackgroundImageOpacity: (opacity) => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: normalizeBackgroundImage({ ...state.backgroundImage, opacity }),
+    };
+  }),
+
+  setBackgroundImageLocked: (locked) => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: { ...state.backgroundImage, locked },
+      status: locked ? "Locked background image." : "Unlocked background image.",
+    };
+  }),
+
+  removeBackgroundImage: () => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: null,
+      tool: state.tool === "background" ? "select" : state.tool,
+      status: "Removed background image.",
+    };
+  }),
+
   addRouteNode: (nodeId) => set((state) => {
     const last = state.routeNodeIds[state.routeNodeIds.length - 1];
     if (!last) return { routeNodeIds: [nodeId] };
@@ -275,3 +366,18 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   clearRoute: () => set({ routeNodeIds: [] }),
 }));
+
+function normalizeBackgroundImage(backgroundImage: EditorBackgroundImage): EditorBackgroundImage {
+  return {
+    ...backgroundImage,
+    naturalWidth: positiveOr(backgroundImage.naturalWidth, 100),
+    naturalHeight: positiveOr(backgroundImage.naturalHeight, 100),
+    width: positiveOr(backgroundImage.width, 0.5),
+    height: positiveOr(backgroundImage.height, 0.5),
+    opacity: Math.min(1, Math.max(0, backgroundImage.opacity)),
+  };
+}
+
+function positiveOr(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}

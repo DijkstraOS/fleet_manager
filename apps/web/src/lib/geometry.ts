@@ -11,14 +11,79 @@ export interface CanvasBounds {
   height: number;
 }
 
-export function getBounds(map: MapDocument): CanvasBounds {
-  if (map.nodes.length === 0) return { x: -2, y: -2, width: 20, height: 14 };
+interface BackgroundBoundsSource {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function getBounds(map: MapDocument, backgroundImage: BackgroundBoundsSource | null = null): CanvasBounds {
+  const nodeBounds = getNodeExtents(map);
+  const backgroundBounds = backgroundImage
+    ? {
+      minX: backgroundImage.x,
+      maxX: backgroundImage.x + backgroundImage.width,
+      minY: backgroundImage.y,
+      maxY: backgroundImage.y + backgroundImage.height,
+    }
+    : null;
+  const extents = combineExtents(nodeBounds, backgroundBounds);
+  return extents ? padExtents(extents) : defaultBounds();
+}
+
+export function getNodeBounds(map: MapDocument): CanvasBounds {
+  const extents = getNodeExtents(map);
+  return extents ? padExtents(extents) : defaultBounds();
+}
+
+export function fitRectToBounds(bounds: CanvasBounds, naturalWidth: number, naturalHeight: number): CanvasBounds {
+  const aspect = naturalWidth > 0 && naturalHeight > 0 ? naturalWidth / naturalHeight : 1;
+  const boundsAspect = bounds.width / bounds.height;
+  const width = aspect >= boundsAspect ? bounds.width : bounds.height * aspect;
+  const height = aspect >= boundsAspect ? bounds.width / aspect : bounds.height;
+  return {
+    x: bounds.x + (bounds.width - width) / 2,
+    y: bounds.y + (bounds.height - height) / 2,
+    width,
+    height,
+  };
+}
+
+function defaultBounds(): CanvasBounds {
+  return { x: -2, y: -2, width: 20, height: 14 };
+}
+
+function getNodeExtents(map: MapDocument) {
+  if (map.nodes.length === 0) return null;
   const xs = map.nodes.map((node) => node.x);
   const ys = map.nodes.map((node) => node.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+  return {
+    minX: Math.min(...xs),
+    maxX: Math.max(...xs),
+    minY: Math.min(...ys),
+    maxY: Math.max(...ys),
+  };
+}
+
+type Extents = NonNullable<ReturnType<typeof getNodeExtents>>;
+
+function combineExtents(first: Extents | null, second: Extents | null) {
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    minX: Math.min(first.minX, second.minX),
+    maxX: Math.max(first.maxX, second.maxX),
+    minY: Math.min(first.minY, second.minY),
+    maxY: Math.max(first.maxY, second.maxY),
+  };
+}
+
+function padExtents(extents: Extents): CanvasBounds {
+  const minX = extents.minX;
+  const maxX = extents.maxX;
+  const minY = extents.minY;
+  const maxY = extents.maxY;
   return {
     x: minX - 2,
     y: minY - 2,
@@ -32,11 +97,16 @@ export function snap(value: number) {
 }
 
 export function screenToWorld(svg: SVGSVGElement, clientX: number, clientY: number) {
+  const transformed = screenToWorldRaw(svg, clientX, clientY);
+  return { x: snap(transformed.x), y: snap(transformed.y) };
+}
+
+export function screenToWorldRaw(svg: SVGSVGElement, clientX: number, clientY: number) {
   const point = svg.createSVGPoint();
   point.x = clientX;
   point.y = clientY;
   const transformed = point.matrixTransform(svg.getScreenCTM()?.inverse());
-  return { x: snap(transformed.x), y: snap(transformed.y) };
+  return { x: transformed.x, y: transformed.y };
 }
 
 export function zoomViewport(viewport: CanvasBounds, anchor: { x: number; y: number }, scale: number): CanvasBounds {

@@ -2,7 +2,8 @@ import type { PointerEvent, RefObject, WheelEvent } from "react";
 import type { MapDocument, MapEdge, MapNode, VdaState, VdaVisualization } from "@agv/core";
 import { LocateFixed, Minus, Plus } from "lucide-react";
 import { GRID, type CanvasBounds } from "../../lib/geometry";
-import type { WorkspaceMode } from "../../types";
+import type { EditorBackgroundImage } from "../../stores/editor-store";
+import type { Tool, WorkspaceMode } from "../../types";
 
 export type CanvasSelection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
 
@@ -17,6 +18,8 @@ export interface MapCanvasViewProps {
   map: MapDocument;
   bounds: CanvasBounds;
   workspaceMode: WorkspaceMode;
+  tool: Tool;
+  backgroundImage: EditorBackgroundImage | null;
   selection: CanvasSelection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
@@ -25,6 +28,8 @@ export interface MapCanvasViewProps {
   onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerUp: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasWheel: (event: WheelEvent<SVGSVGElement>) => void;
+  onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => void;
+  onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => void;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
   onZoomIn: () => void;
@@ -45,6 +50,14 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         onPointerLeave={props.onCanvasPointerUp}
         onWheel={props.onCanvasWheel}
       >
+        <CanvasDefs />
+        <BaseLayer bounds={props.bounds} />
+        <BackgroundImageLayer
+          backgroundImage={props.backgroundImage}
+          active={props.workspaceMode === "map" && props.tool === "background"}
+          onBackgroundPointerDown={props.onBackgroundPointerDown}
+          onBackgroundScalePointerDown={props.onBackgroundScalePointerDown}
+        />
         <GridLayer bounds={props.bounds} />
         <EdgeLayer
           edges={props.map.edges}
@@ -73,19 +86,83 @@ export function MapCanvasView(props: MapCanvasViewProps) {
   );
 }
 
+function CanvasDefs() {
+  return (
+    <defs>
+      <pattern id="grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
+        <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="#d7dee8" strokeWidth="0.015" />
+      </pattern>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" />
+      </marker>
+    </defs>
+  );
+}
+
+function BaseLayer(props: { bounds: CanvasBounds }) {
+  return (
+    <g pointerEvents="none">
+      <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="#f8fafc" />
+    </g>
+  );
+}
+
 function GridLayer(props: { bounds: CanvasBounds }) {
   return (
     <g pointerEvents="none">
-      <defs>
-        <pattern id="grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
-          <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="#d7dee8" strokeWidth="0.015" />
-        </pattern>
-        <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" />
-        </marker>
-      </defs>
-      <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="#f8fafc" />
       <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="url(#grid)" />
+    </g>
+  );
+}
+
+function BackgroundImageLayer(props: {
+  backgroundImage: EditorBackgroundImage | null;
+  active: boolean;
+  onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => void;
+  onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => void;
+}) {
+  const backgroundImage = props.backgroundImage;
+  if (!backgroundImage) return null;
+  const editable = props.active && !backgroundImage.locked;
+  const handleSize = Math.max(0.35, Math.min(backgroundImage.width, backgroundImage.height) * 0.035);
+
+  return (
+    <g
+      className={editable ? "background-layer editable" : "background-layer"}
+      pointerEvents={editable ? "auto" : "none"}
+      onPointerDown={(event) => props.onBackgroundPointerDown(event, backgroundImage)}
+    >
+      <image
+        href={backgroundImage.src}
+        x={backgroundImage.x}
+        y={backgroundImage.y}
+        width={backgroundImage.width}
+        height={backgroundImage.height}
+        opacity={backgroundImage.opacity}
+        preserveAspectRatio="none"
+        className="background-image"
+      />
+      {props.active && (
+        <rect
+          x={backgroundImage.x}
+          y={backgroundImage.y}
+          width={backgroundImage.width}
+          height={backgroundImage.height}
+          className={backgroundImage.locked ? "background-frame locked" : "background-frame"}
+          pointerEvents="none"
+        />
+      )}
+      {editable && (
+        <rect
+          x={backgroundImage.x + backgroundImage.width - handleSize / 2}
+          y={backgroundImage.y + backgroundImage.height - handleSize / 2}
+          width={handleSize}
+          height={handleSize}
+          rx={handleSize * 0.18}
+          className="background-scale-handle"
+          onPointerDown={(event) => props.onBackgroundScalePointerDown(event, backgroundImage)}
+        />
+      )}
     </g>
   );
 }

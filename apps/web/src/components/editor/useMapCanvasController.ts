@@ -1,7 +1,7 @@
 import { useMemo, useRef, type PointerEvent, type WheelEvent } from "react";
 import type { MapNode } from "@agv/core";
-import { getBounds, panViewport, screenToWorld, zoomViewport, type CanvasBounds } from "../../lib/geometry";
-import { useEditorStore } from "../../stores/editor-store";
+import { getBounds, panViewport, screenToWorld, screenToWorldRaw, zoomViewport, type CanvasBounds } from "../../lib/geometry";
+import { useEditorStore, type EditorBackgroundImage } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
 import { useRouteStore } from "../../stores/route-store";
 
@@ -12,12 +12,20 @@ interface PanState {
   moved: boolean;
 }
 
+interface BackgroundDragState {
+  kind: "move" | "scale";
+  origin: { x: number; y: number };
+  backgroundImage: EditorBackgroundImage;
+}
+
 export function useMapCanvasController() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<PanState | null>(null);
+  const backgroundDragRef = useRef<BackgroundDragState | null>(null);
   const map = useEditorStore((state) => state.map);
   const workspaceMode = useEditorStore((state) => state.workspaceMode);
   const tool = useEditorStore((state) => state.tool);
+  const backgroundImage = useEditorStore((state) => state.backgroundImage);
   const selection = useEditorStore((state) => state.selection);
   const edgeStartNodeId = useEditorStore((state) => state.edgeStartNodeId);
   const viewportState = useEditorStore((state) => state.viewport);
@@ -35,7 +43,8 @@ export function useMapCanvasController() {
   const dragNodeTo = useEditorStore((state) => state.dragNodeTo);
   const endDragNode = useEditorStore((state) => state.endDragNode);
   const setViewport = useEditorStore((state) => state.setViewport);
-  const fitBounds = useMemo(() => getBounds(map), [map]);
+  const updateBackgroundImage = useEditorStore((state) => state.updateBackgroundImage);
+  const fitBounds = useMemo(() => getBounds(map, backgroundImage), [map, backgroundImage]);
   const viewport = viewportState || fitBounds;
   const trackingRouteNodeIds = useMemo(() => {
     const activeStatus = Object.values(orderStatuses).find((status) => {
@@ -60,6 +69,8 @@ export function useMapCanvasController() {
     map,
     bounds: viewport,
     workspaceMode,
+    tool,
+    backgroundImage,
     selection,
     edgeStartNodeId,
     routeNodeIds: visibleRouteNodeIds,
@@ -100,6 +111,31 @@ export function useMapCanvasController() {
     },
     onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => {
       if (!svgRef.current) return;
+      if (backgroundDragRef.current) {
+        const point = screenToWorldRaw(svgRef.current, event.clientX, event.clientY);
+        const drag = backgroundDragRef.current;
+        if (drag.kind === "move") {
+          updateBackgroundImage((backgroundImage) => ({
+            ...backgroundImage,
+            x: drag.backgroundImage.x + point.x - drag.origin.x,
+            y: drag.backgroundImage.y + point.y - drag.origin.y,
+          }));
+        } else {
+          const scale = Math.max(
+            0.05,
+            Math.max(
+              (point.x - drag.backgroundImage.x) / drag.backgroundImage.width,
+              (point.y - drag.backgroundImage.y) / drag.backgroundImage.height
+            )
+          );
+          updateBackgroundImage((backgroundImage) => ({
+            ...backgroundImage,
+            width: drag.backgroundImage.width * scale,
+            height: drag.backgroundImage.height * scale,
+          }));
+        }
+        return;
+      }
       const point = screenToWorld(svgRef.current, event.clientX, event.clientY);
       dragNodeTo(point.x, point.y);
       if (panRef.current) {
@@ -117,10 +153,31 @@ export function useMapCanvasController() {
         clearSelection();
       }
       panRef.current = null;
+      backgroundDragRef.current = null;
       endDragNode();
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
+    },
+    onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => {
+      event.stopPropagation();
+      if (workspaceMode !== "map" || tool !== "background" || backgroundImage.locked || !svgRef.current) return;
+      backgroundDragRef.current = {
+        kind: "move",
+        origin: screenToWorldRaw(svgRef.current, event.clientX, event.clientY),
+        backgroundImage,
+      };
+      svgRef.current.setPointerCapture(event.pointerId);
+    },
+    onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => {
+      event.stopPropagation();
+      if (workspaceMode !== "map" || tool !== "background" || backgroundImage.locked || !svgRef.current) return;
+      backgroundDragRef.current = {
+        kind: "scale",
+        origin: screenToWorldRaw(svgRef.current, event.clientX, event.clientY),
+        backgroundImage,
+      };
+      svgRef.current.setPointerCapture(event.pointerId);
     },
     onCanvasWheel: (event: WheelEvent<SVGSVGElement>) => {
       if (!svgRef.current) return;
