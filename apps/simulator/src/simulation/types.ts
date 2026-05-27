@@ -13,6 +13,7 @@ export interface SimulatedAgv {
   currentOrder: VdaOrder | null;
   remainingNodes: VdaOrderNode[];
   remainingEdges: VdaOrderEdge[];
+  activeEdgeDistance: number;
   speedMetersPerSecond: number;
   driving: boolean;
 }

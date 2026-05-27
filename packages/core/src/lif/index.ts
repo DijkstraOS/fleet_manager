@@ -1,5 +1,5 @@
 import type { EdgeTrajectory, MapDocument, MapEdge, MapNode } from "../map/index";
-import { createEmptyMap } from "../map/index";
+import { createEmptyMap, syncMapEdgeTrajectoryEndpoints } from "../map/index";
 import { LIFParser } from "vdma-lif";
 import type {
   LifDocument,
@@ -45,13 +45,14 @@ export function exportLifDocument(map: MapDocument): LifDocument {
     ...layoutExtras
   } = mapUnsupported;
   const preservedMeta = isRecord(lifMetaInformation) ? lifMetaInformation : {};
+  const edges = syncMapEdgeTrajectoryEndpoints(map.edges, map.nodes);
   const layout: LifLayout = {
     ...layoutExtras,
     layoutId: map.id,
     layoutName: map.name,
     layoutVersion: map.version,
     nodes: map.nodes.map(exportLifNode),
-    edges: map.edges.map(exportLifEdge),
+    edges: edges.map(exportLifEdge),
     stations: toRecordArray(layoutExtras.stations) as LifStation[],
   };
 

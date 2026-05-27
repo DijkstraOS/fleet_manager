@@ -1,5 +1,14 @@
 import { EStop, OperatingMode } from "vda-5050-lib";
-import { findNode, type MapDocument, type VdaOrder, type VdaStateDraft, type VdaVisualizationDraft } from "@agv/core";
+import {
+  getQuadraticBezierPoseAtDistance,
+  isSupportedQuadraticBezier,
+  findNode,
+  type EdgeTrajectory,
+  type MapDocument,
+  type VdaOrder,
+  type VdaStateDraft,
+  type VdaVisualizationDraft,
+} from "@agv/core";
 import type { SimulatedAgv } from "./types";
 
 export function createSimulatedAgv(params: {
@@ -27,6 +36,7 @@ export function createSimulatedAgv(params: {
     currentOrder: null,
     remainingNodes: [],
     remainingEdges: [],
+    activeEdgeDistance: 0,
     speedMetersPerSecond: params.speedMetersPerSecond || 1.2,
     driving: false,
   };
@@ -43,6 +53,7 @@ export function acceptOrder(agv: SimulatedAgv, order: VdaOrder): SimulatedAgv {
     currentOrder: order,
     remainingNodes,
     remainingEdges: [...order.edges],
+    activeEdgeDistance: 0,
     driving: remainingNodes.length > 0,
   };
 }
@@ -65,22 +76,25 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
   const speed = Math.min(agv.speedMetersPerSecond, maxSpeed);
   const step = speed * (dtMs / 1000);
 
-  if (distance <= Math.max(step, 0.001)) {
-    const remainingNodes = agv.remainingNodes.slice(1);
-    const remainingEdges = agv.remainingEdges.slice(1);
-    const orderComplete = remainingNodes.length === 0;
+  if (activeEdge && isSupportedQuadraticBezier(activeEdge.trajectory as EdgeTrajectory | null | undefined)) {
+    const distance = agv.activeEdgeDistance + step;
+    const pose = getQuadraticBezierPoseAtDistance(activeEdge.trajectory as EdgeTrajectory, distance);
+    if (distance >= pose.totalLength) {
+      return arriveAtTarget(agv, target, targetPosition);
+    }
     return {
       ...agv,
-      currentNodeId: target.nodeId,
-      x: targetPosition.x,
-      y: targetPosition.y,
-      theta: targetPosition.theta ?? agv.theta,
-      batteryCharge: Math.max(0, agv.batteryCharge - 0.02),
-      currentOrder: orderComplete ? null : agv.currentOrder,
-      remainingNodes,
-      remainingEdges,
-      driving: !orderComplete,
+      x: pose.x,
+      y: pose.y,
+      theta: pose.theta,
+      activeEdgeDistance: distance,
+      batteryCharge: Math.max(0, agv.batteryCharge - 0.01),
+      driving: true,
     };
+  }
+
+  if (distance <= Math.max(step, 0.001)) {
+    return arriveAtTarget(agv, target, targetPosition);
   }
 
   const ratio = step / distance;
@@ -89,8 +103,32 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
     x: agv.x + dx * ratio,
     y: agv.y + dy * ratio,
     theta: Math.atan2(dy, dx),
+    activeEdgeDistance: 0,
     batteryCharge: Math.max(0, agv.batteryCharge - 0.01),
     driving: true,
+  };
+}
+
+function arriveAtTarget(
+  agv: SimulatedAgv,
+  target: NonNullable<SimulatedAgv["remainingNodes"][number]>,
+  targetPosition: NonNullable<NonNullable<SimulatedAgv["remainingNodes"][number]>["nodePosition"]>
+): SimulatedAgv {
+  const remainingNodes = agv.remainingNodes.slice(1);
+  const remainingEdges = agv.remainingEdges.slice(1);
+  const orderComplete = remainingNodes.length === 0;
+  return {
+    ...agv,
+    currentNodeId: target.nodeId,
+    x: targetPosition.x,
+    y: targetPosition.y,
+    theta: targetPosition.theta ?? agv.theta,
+    batteryCharge: Math.max(0, agv.batteryCharge - 0.02),
+    currentOrder: orderComplete ? null : agv.currentOrder,
+    remainingNodes,
+    remainingEdges,
+    activeEdgeDistance: 0,
+    driving: !orderComplete,
   };
 }
 

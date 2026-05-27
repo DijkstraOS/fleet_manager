@@ -1,5 +1,5 @@
 import type { MapDocument } from "../map/index";
-import { findEdge, findNode, validateRoute } from "../map/index";
+import { findEdge, findNode, syncTrajectoryEndpoints, validateRoute } from "../map/index";
 import type { OrderDraft, VdaOrder, VdaOrderEdge, VdaOrderNode } from "./types";
 
 export function buildVdaOrder(map: MapDocument, draft: OrderDraft, orderId = makeOrderId()): VdaOrder {
@@ -32,17 +32,18 @@ export function buildVdaOrder(map: MapDocument, draft: OrderDraft, orderId = mak
     if (!from || !to) throw new Error("Route contains an invalid gap.");
     const edge = findEdge(map, from, to);
     if (!edge) throw new Error(`No directed edge from ${from} to ${to}.`);
+    const syncedEdge = syncTrajectoryEndpoints(edge, findNode(map, from), findNode(map, to));
     edges.push({
-      edgeId: edge.id,
+      edgeId: syncedEdge.id,
       sequenceId: index * 2 + 1,
       released: true,
       startNodeId: from,
       endNodeId: to,
-      ...(edge.maxSpeed !== undefined ? { maxSpeed: edge.maxSpeed } : {}),
-      ...(edge.orientation !== undefined ? { orientation: edge.orientation } : {}),
-      orientationType: toVdaOrientationType(edge.orientationType),
-      rotationAllowed: edge.rotationAllowed,
-      ...(edge.trajectory ? { trajectory: edge.trajectory } : {}),
+      ...(syncedEdge.maxSpeed !== undefined ? { maxSpeed: syncedEdge.maxSpeed } : {}),
+      ...(syncedEdge.orientation !== undefined ? { orientation: syncedEdge.orientation } : {}),
+      orientationType: toVdaOrientationType(syncedEdge.orientationType),
+      rotationAllowed: syncedEdge.rotationAllowed,
+      ...(syncedEdge.trajectory ? { trajectory: syncedEdge.trajectory } : {}),
       actions: [],
     });
   }

@@ -2,9 +2,15 @@ import { create } from "zustand";
 import {
   createDemoMap,
   findEdge,
+  findNode,
+  isSupportedQuadraticBezier,
   nextEdgeId,
   nextNodeId,
+  resetEdgeToQuadraticBezier,
   slugify,
+  setQuadraticBezierHandle,
+  syncMapEdgeTrajectoryEndpoints,
+  syncTrajectoryEndpoints,
   type MapDocument,
   type MapEdge,
   type MapNode,
@@ -59,6 +65,10 @@ export interface EditorState {
   setBackgroundImageOpacity: (opacity: number) => void;
   setBackgroundImageLocked: (locked: boolean) => void;
   removeBackgroundImage: () => void;
+  makeSelectedEdgeCurve: () => void;
+  resetSelectedEdgeCurve: () => void;
+  straightenSelectedEdge: () => void;
+  updateSelectedEdgeCurveHandle: (x: number, y: number) => void;
   addRouteNode: (nodeId: string) => void;
   beginDragNode: (nodeId: string) => void;
   dragNodeTo: (x: number, y: number) => void;
@@ -281,6 +291,37 @@ export const useEditorStore = create<EditorState>((set) => ({
     };
   }),
 
+  makeSelectedEdgeCurve: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const next = updateSelectedEdgeTrajectory(state, (edge, from, to) => {
+      const synced = syncTrajectoryEndpoints(edge, from, to);
+      if (isSupportedQuadraticBezier(synced.trajectory)) return synced;
+      return resetEdgeToQuadraticBezier(edge, from, to);
+    });
+    return next ? { ...next, status: "Converted edge to curve." } : {};
+  }),
+
+  resetSelectedEdgeCurve: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const next = updateSelectedEdgeTrajectory(state, (edge, from, to) =>
+      resetEdgeToQuadraticBezier(edge, from, to)
+    );
+    return next ? { ...next, status: "Reset edge curve." } : {};
+  }),
+
+  straightenSelectedEdge: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const next = updateSelectedEdgeTrajectory(state, (edge) => ({ ...edge, trajectory: null }));
+    return next ? { ...next, status: "Straightened edge." } : {};
+  }),
+
+  updateSelectedEdgeCurveHandle: (x, y) => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    return updateSelectedEdgeTrajectory(state, (edge, from, to) =>
+      setQuadraticBezierHandle(edge, from, to, { x, y })
+    ) || {};
+  }),
+
   addRouteNode: (nodeId) => set((state) => {
     const last = state.routeNodeIds[state.routeNodeIds.length - 1];
     if (!last) return { routeNodeIds: [nodeId] };
@@ -295,12 +336,14 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   dragNodeTo: (x, y) => set((state) => {
     if (!state.dragNodeId || state.tool !== "select") return {};
+    const nodes = state.map.nodes.map((node) =>
+      node.id === state.dragNodeId ? { ...node, x, y } : node
+    );
     return {
       map: {
         ...state.map,
-        nodes: state.map.nodes.map((node) =>
-          node.id === state.dragNodeId ? { ...node, x, y } : node
-        ),
+        nodes,
+        edges: syncMapEdgeTrajectoryEndpoints(state.map.edges, nodes),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -336,17 +379,19 @@ export const useEditorStore = create<EditorState>((set) => ({
   updateNode: (next) => set((state) => {
     if (state.selection?.type !== "node") return {};
     const previousId = state.selection.id;
+    const nodes = state.map.nodes.map((node) => node.id === previousId ? next : node);
+    const edges = state.map.edges.map((edge) => ({
+      ...edge,
+      from: edge.from === previousId ? next.id : edge.from,
+      to: edge.to === previousId ? next.id : edge.to,
+    }));
     return {
       selection: { type: "node", id: next.id },
       routeNodeIds: state.routeNodeIds.map((nodeId) => nodeId === previousId ? next.id : nodeId),
       map: {
         ...state.map,
-        nodes: state.map.nodes.map((node) => node.id === previousId ? next : node),
-        edges: state.map.edges.map((edge) => ({
-          ...edge,
-          from: edge.from === previousId ? next.id : edge.from,
-          to: edge.to === previousId ? next.id : edge.to,
-        })),
+        nodes,
+        edges: syncMapEdgeTrajectoryEndpoints(edges, nodes),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -354,11 +399,14 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   updateEdge: (next) => set((state) => {
     if (state.selection?.type !== "edge") return {};
+    const from = findNode(state.map, next.from);
+    const to = findNode(state.map, next.to);
+    const synced = syncTrajectoryEndpoints(next, from, to);
     return {
-      selection: { type: "edge", id: next.id },
+      selection: { type: "edge", id: synced.id },
       map: {
         ...state.map,
-        edges: state.map.edges.map((edge) => edge.id === state.selection?.id ? next : edge),
+        edges: state.map.edges.map((edge) => edge.id === state.selection?.id ? synced : edge),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -380,4 +428,24 @@ function normalizeBackgroundImage(backgroundImage: EditorBackgroundImage): Edito
 
 function positiveOr(value: number, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function updateSelectedEdgeTrajectory(
+  state: EditorState,
+  updater: (edge: MapEdge, from: MapNode, to: MapNode) => MapEdge
+): Pick<EditorState, "map"> | null {
+  if (state.selection?.type !== "edge") return null;
+  const edge = state.map.edges.find((item) => item.id === state.selection?.id);
+  if (!edge) return null;
+  const from = findNode(state.map, edge.from);
+  const to = findNode(state.map, edge.to);
+  if (!from || !to) return null;
+  const next = updater(edge, from, to);
+  return {
+    map: {
+      ...state.map,
+      edges: state.map.edges.map((item) => item.id === edge.id ? next : item),
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }

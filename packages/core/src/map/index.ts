@@ -1,4 +1,5 @@
 import type { MapDocument, MapEdge, MapNode, RouteDocument, ValidationIssue } from "./types";
+import { validateTrajectory } from "./trajectory";
 
 export function createEmptyMap(name = "Untitled Map"): MapDocument {
   const now = new Date().toISOString();
@@ -111,6 +112,9 @@ export function validateMap(map: MapDocument): ValidationIssue[] {
     if (edgeItem.maxSpeed !== undefined && edgeItem.maxSpeed <= 0) {
       issues.push({ code: "edge.maxSpeed.invalid", message: `Edge ${edgeItem.id} max speed must be positive.` });
     }
+    for (const message of validateTrajectory(edgeItem)) {
+      issues.push({ code: "edge.trajectory.invalid", message });
+    }
   }
 
   return issues;
@@ -199,3 +203,4 @@ export function slugify(value: string): string {
 }
 
 export type { EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, RouteDocument, ValidationIssue } from "./types";
+export * from "./trajectory";

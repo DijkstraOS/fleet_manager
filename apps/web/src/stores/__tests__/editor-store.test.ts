@@ -1,4 +1,4 @@
-import { createDemoMap, createEmptyMap } from "@agv/core";
+import { createDemoMap, createEmptyMap, isSupportedQuadraticBezier } from "@agv/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getBounds } from "../../lib/geometry";
 import { useEditorStore } from "../editor-store";
@@ -107,6 +107,33 @@ describe("editor store", () => {
     useEditorStore.getState().addRouteNode("corr-1");
 
     expect(useEditorStore.getState().routeNodeIds).toEqual(["dock-a", "corr-1"]);
+  });
+
+  it("creates, updates, resets, straightens, and syncs edge curves", () => {
+    const store = useEditorStore.getState();
+    store.selectEdge("dock-a-corr-1");
+    store.makeSelectedEdgeCurve();
+
+    let edge = useEditorStore.getState().map.edges.find((item) => item.id === "dock-a-corr-1")!;
+    expect(isSupportedQuadraticBezier(edge.trajectory)).toBe(true);
+
+    useEditorStore.getState().updateSelectedEdgeCurveHandle(2.5, 3);
+    edge = useEditorStore.getState().map.edges.find((item) => item.id === "dock-a-corr-1")!;
+    expect(edge.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 3 });
+
+    useEditorStore.getState().resetSelectedEdgeCurve();
+    edge = useEditorStore.getState().map.edges.find((item) => item.id === "dock-a-corr-1")!;
+    expect(isSupportedQuadraticBezier(edge.trajectory)).toBe(true);
+
+    useEditorStore.getState().selectNode("dock-a");
+    useEditorStore.getState().updateNode({ ...useEditorStore.getState().map.nodes[0]!, x: -1, y: -1 });
+    edge = useEditorStore.getState().map.edges.find((item) => item.id === "dock-a-corr-1")!;
+    expect(edge.trajectory?.controlPoints[0]).toMatchObject({ x: -1, y: -1 });
+
+    useEditorStore.getState().selectEdge("dock-a-corr-1");
+    useEditorStore.getState().straightenSelectedEdge();
+    edge = useEditorStore.getState().map.edges.find((item) => item.id === "dock-a-corr-1")!;
+    expect(edge.trajectory).toBeNull();
   });
 
   it("updates node ids and keeps edges and route references aligned", () => {

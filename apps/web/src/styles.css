@@ -451,6 +451,17 @@ h2 {
   cursor: nwse-resize;
 }
 
+.curve-handle {
+  fill: #ffffff;
+  stroke: #f59e0b;
+  stroke-width: 0.08;
+  cursor: grab;
+}
+
+.curve-handle:active {
+  cursor: grabbing;
+}
+
 .node-label,
 .agv-label {
   font-size: 0.33px;
@@ -522,6 +533,16 @@ h2 {
   font-size: 13px;
   font-weight: 700;
   word-break: break-word;
+}
+
+.curve-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.curve-actions .secondary-button {
+  margin-top: 0;
 }
 
 .field input,

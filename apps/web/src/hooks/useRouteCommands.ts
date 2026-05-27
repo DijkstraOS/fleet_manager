@@ -5,6 +5,7 @@ import {
 } from "@agv/core";
 import {
   deleteRoute as deleteRouteDocument,
+  saveMap as saveMapDocument,
   saveRoute as saveRouteDocument,
   sendOrder,
 } from "../services/api";
@@ -17,7 +18,8 @@ export function useRouteCommands(options: {
   routeIssues: ValidationIssue[];
   selectedRoute: RouteDocument | null;
 }) {
-  const mapId = useEditorStore((state) => state.map.id);
+  const map = useEditorStore((state) => state.map);
+  const mapId = map.id;
   const selectedAgvSerial = useFleetStore((state) => state.selectedAgvSerial);
   const setOrderStatus = useFleetStore((state) => state.setOrderStatus);
   const routes = useRouteStore((state) => state.routes);
@@ -62,15 +64,22 @@ export function useRouteCommands(options: {
         setRouteStatus(options.routeIssues[0]?.message || "Invalid route.");
         return;
       }
-      const response = await sendOrder({
-        mapId,
-        agvSerialNumber: agv.serialNumber,
-        routeNodeIds: draftRouteNodeIds,
-        ...(selectedRouteId ? { routeId: selectedRouteId } : {}),
-        ...(draftRouteName.trim() ? { routeName: draftRouteName.trim() } : {}),
-      });
-      setOrderStatus(response.ok ? `Order sent to ${agv.serialNumber}.` : "Order failed.");
-      setRouteStatus(response.ok ? `Sent ${draftRouteName} to ${agv.serialNumber}.` : "Order failed.");
+      try {
+        setRouteStatus("Preparing route...");
+        await saveMapDocument(map);
+        const response = await sendOrder({
+          mapId,
+          agvSerialNumber: agv.serialNumber,
+          routeNodeIds: draftRouteNodeIds,
+          ...(selectedRouteId ? { routeId: selectedRouteId } : {}),
+          ...(draftRouteName.trim() ? { routeName: draftRouteName.trim() } : {}),
+        });
+        setOrderStatus(response.ok ? `Order sent to ${agv.serialNumber}.` : "Order failed.");
+        setRouteStatus(response.ok ? `Sent ${draftRouteName} to ${agv.serialNumber}.` : "Order failed.");
+      } catch (error) {
+        setOrderStatus("Order failed.");
+        setRouteStatus(error instanceof Error ? error.message : "Order failed.");
+      }
     },
   };
 }

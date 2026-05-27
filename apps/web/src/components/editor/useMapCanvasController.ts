@@ -18,10 +18,15 @@ interface BackgroundDragState {
   backgroundImage: EditorBackgroundImage;
 }
 
+interface CurveDragState {
+  edgeId: string;
+}
+
 export function useMapCanvasController() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<PanState | null>(null);
   const backgroundDragRef = useRef<BackgroundDragState | null>(null);
+  const curveDragRef = useRef<CurveDragState | null>(null);
   const map = useEditorStore((state) => state.map);
   const workspaceMode = useEditorStore((state) => state.workspaceMode);
   const tool = useEditorStore((state) => state.tool);
@@ -44,6 +49,7 @@ export function useMapCanvasController() {
   const endDragNode = useEditorStore((state) => state.endDragNode);
   const setViewport = useEditorStore((state) => state.setViewport);
   const updateBackgroundImage = useEditorStore((state) => state.updateBackgroundImage);
+  const updateSelectedEdgeCurveHandle = useEditorStore((state) => state.updateSelectedEdgeCurveHandle);
   const fitBounds = useMemo(() => getBounds(map, backgroundImage), [map, backgroundImage]);
   const viewport = viewportState || fitBounds;
   const trackingRouteNodeIds = useMemo(() => {
@@ -111,6 +117,11 @@ export function useMapCanvasController() {
     },
     onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => {
       if (!svgRef.current) return;
+      if (curveDragRef.current) {
+        const point = screenToWorld(svgRef.current, event.clientX, event.clientY);
+        updateSelectedEdgeCurveHandle(point.x, point.y);
+        return;
+      }
       if (backgroundDragRef.current) {
         const point = screenToWorldRaw(svgRef.current, event.clientX, event.clientY);
         const drag = backgroundDragRef.current;
@@ -154,6 +165,7 @@ export function useMapCanvasController() {
       }
       panRef.current = null;
       backgroundDragRef.current = null;
+      curveDragRef.current = null;
       endDragNode();
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
@@ -177,6 +189,13 @@ export function useMapCanvasController() {
         origin: screenToWorldRaw(svgRef.current, event.clientX, event.clientY),
         backgroundImage,
       };
+      svgRef.current.setPointerCapture(event.pointerId);
+    },
+    onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => {
+      event.stopPropagation();
+      if (workspaceMode !== "map" || !svgRef.current) return;
+      selectEdge(edgeId);
+      curveDragRef.current = { edgeId };
       svgRef.current.setPointerCapture(event.pointerId);
     },
     onCanvasWheel: (event: WheelEvent<SVGSVGElement>) => {

@@ -39,6 +39,23 @@ test("runs the map editor simulator path", async ({ page }) => {
   await page.mouse.up();
   await page.getByRole("button", { name: /Lock background/i }).click();
 
+  await page.getByTitle("Select and move nodes").click();
+  await clickWorld(page, 2.5, 0.16);
+  await expect(page.getByText("Direction")).toBeVisible();
+  const edgeDirection = page.locator(".property-row").filter({ hasText: "Direction" }).locator("strong");
+  expect(normalizeText(await edgeDirection.textContent())).toBe("dock-a -> corr-1");
+  await page.getByRole("button", { name: "Make curve" }).click();
+  await expect(page.locator("path.edge")).toHaveCount(1);
+  await expect(page.locator("path.edge").first()).toHaveAttribute("d", / Q /);
+  const curveHandle = page.locator(".curve-handle");
+  await expect(curveHandle).toHaveCount(1);
+  const curveHandleBox = await curveHandle.boundingBox();
+  if (!curveHandleBox) throw new Error("Curve handle is not visible.");
+  await page.mouse.move(curveHandleBox.x + curveHandleBox.width / 2, curveHandleBox.y + curveHandleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(curveHandleBox.x + curveHandleBox.width / 2, curveHandleBox.y + curveHandleBox.height / 2 - 32);
+  await page.mouse.up();
+
   const beforeZoom = await page.locator("svg.map-svg").getAttribute("viewBox");
   await page.getByTitle("Zoom in").click();
   const afterZoom = await page.locator("svg.map-svg").getAttribute("viewBox");
@@ -59,12 +76,24 @@ test("runs the map editor simulator path", async ({ page }) => {
 
   const sendOrder = page.getByRole("button", { name: /Send Route/i });
   await expect(sendOrder).toBeEnabled();
+  const saveBeforeOrder = page.waitForResponse((response) =>
+    response.url().endsWith("/api/maps") && response.request().method() === "POST"
+  );
+  const orderResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/orders") && response.request().method() === "POST"
+  );
   await sendOrder.click();
+  await saveBeforeOrder;
+  const orderPayload = await (await orderResponse).json();
+  expect(orderPayload.order.edges[0].trajectory.degree).toBe(2);
 
   await page.getByRole("button", { name: "Tracking", exact: true }).click();
   await expect(page.getByText("Fleet Tracking")).toBeVisible();
   await expect(page.getByText("New Route")).toBeVisible();
   await expect(page.getByText("completed")).toBeVisible({ timeout: 12_000 });
+
+  await page.reload();
+  await expect(page.locator("path.edge").first()).toHaveAttribute("d", / Q /);
 });
 
 async function clickWorld(page: import("@playwright/test").Page, x: number, y: number) {
@@ -103,4 +132,8 @@ async function worldToScreen(page: import("@playwright/test").Page, x: number, y
     const screenPoint = svgPoint.matrixTransform(matrix);
     return { x: screenPoint.x, y: screenPoint.y };
   }, { x, y });
+}
+
+function normalizeText(value: string | null) {
+  return (value || "").replace(/\s+/g, " ").trim();
 }
