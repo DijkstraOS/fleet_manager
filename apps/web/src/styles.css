@@ -265,7 +265,7 @@ h2 {
 
 .tool-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
 }
 
@@ -425,6 +425,43 @@ h2 {
   opacity: 1;
 }
 
+.background-layer.editable {
+  cursor: move;
+}
+
+.background-image {
+  pointer-events: inherit;
+}
+
+.background-frame {
+  fill: none;
+  stroke: #155eef;
+  stroke-width: 0.08;
+  stroke-dasharray: 0.24 0.18;
+}
+
+.background-frame.locked {
+  stroke: #64748b;
+}
+
+.background-scale-handle {
+  fill: #ffffff;
+  stroke: #155eef;
+  stroke-width: 0.08;
+  cursor: nwse-resize;
+}
+
+.curve-handle {
+  fill: #ffffff;
+  stroke: #f59e0b;
+  stroke-width: 0.08;
+  cursor: grab;
+}
+
+.curve-handle:active {
+  cursor: grabbing;
+}
+
 .node-label,
 .agv-label {
   font-size: 0.33px;
@@ -498,6 +535,16 @@ h2 {
   word-break: break-word;
 }
 
+.curve-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.curve-actions .secondary-button {
+  margin-top: 0;
+}
+
 .field input,
 .field select {
   height: 34px;
@@ -507,6 +554,48 @@ h2 {
   background: white;
   color: #172033;
   min-width: 0;
+}
+
+.range-field {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #46566d;
+}
+
+.range-field input {
+  width: 100%;
+}
+
+.background-summary {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  color: #263449;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.background-summary svg {
+  width: 17px;
+  height: 17px;
+}
+
+.background-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .checkbox-row {

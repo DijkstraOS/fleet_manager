@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { LIFParser } from "vdma-lif";
 import {
   buildVdaOrder,
+  createQuadraticBezierTrajectory,
   createDemoMap,
+  getQuadraticBezierPoseAtDistance,
   exportLifDocument,
   importLifDocument,
+  isSupportedQuadraticBezier,
   nextRouteId,
   validateMap,
   validateRoute,
@@ -20,6 +23,38 @@ describe("map validation", () => {
     const map = createDemoMap();
     const issues = validateRoute(map, ["dock-a", "mat-b"]);
     expect(issues[0]?.code).toBe("route.edge.missing");
+  });
+
+  it("accepts supported quadratic edge trajectories and rejects malformed trajectory values", () => {
+    const map = createDemoMap();
+    map.edges[0]!.trajectory = createQuadraticBezierTrajectory(
+      map.nodes.find((node) => node.id === map.edges[0]!.from)!,
+      map.nodes.find((node) => node.id === map.edges[0]!.to)!,
+      { x: 2.5, y: 2 }
+    );
+
+    expect(isSupportedQuadraticBezier(map.edges[0]!.trajectory)).toBe(true);
+    expect(validateMap(map)).toEqual([]);
+
+    map.edges[0]!.trajectory = {
+      degree: 2,
+      knotVector: [0, 0, 0, 1, 1, 1],
+      controlPoints: [{ x: 0, y: 0 }, { x: Number.NaN, y: 2 }, { x: 5, y: 0 }],
+    };
+
+    expect(validateMap(map)[0]?.code).toBe("edge.trajectory.invalid");
+  });
+
+  it("samples a quadratic trajectory midpoint and tangent", () => {
+    const trajectory = createQuadraticBezierTrajectory(
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 5, y: 10 }
+    );
+    const pose = getQuadraticBezierPoseAtDistance(trajectory, 7.5);
+
+    expect(pose.y).toBeGreaterThan(3);
+    expect(pose.totalLength).toBeGreaterThan(10);
   });
 
   it("validates saved route documents against directed map edges", () => {
@@ -218,5 +253,25 @@ describe("VDA order generation", () => {
     expect(order.orderId).toBe("order-test");
     expect(order.nodes.map((node) => node.sequenceId)).toEqual([0, 2, 4]);
     expect(order.edges.map((edge) => edge.sequenceId)).toEqual([1, 3]);
+  });
+
+  it("includes synced edge trajectories in VDA orders", () => {
+    const map = createDemoMap();
+    const edge = map.edges.find((item) => item.from === "dock-a" && item.to === "corr-1")!;
+    edge.trajectory = createQuadraticBezierTrajectory(
+      { x: -100, y: -100 },
+      { x: 100, y: 100 },
+      { x: 2.5, y: 2 }
+    );
+
+    const order = buildVdaOrder(map, {
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["dock-a", "corr-1"],
+    }, "order-test");
+
+    expect(order.edges[0]?.trajectory?.degree).toBe(2);
+    expect(order.edges[0]?.trajectory?.controlPoints[0]).toMatchObject({ x: 0, y: 0 });
+    expect(order.edges[0]?.trajectory?.controlPoints[2]).toMatchObject({ x: 5, y: 0 });
   });
 });

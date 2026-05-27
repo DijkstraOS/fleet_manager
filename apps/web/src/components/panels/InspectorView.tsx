@@ -1,13 +1,28 @@
-import type { MapEdge, MapNode } from "@agv/core";
+import { getQuadraticBezierHandle, isSupportedQuadraticBezier, type MapEdge, type MapNode } from "@agv/core";
 
 export function InspectorView(props: {
   node: MapNode | null;
   edge: MapEdge | null;
   onChangeNode: (node: MapNode) => void;
   onChangeEdge: (edge: MapEdge) => void;
+  onMakeEdgeCurve: () => void;
+  onResetEdgeCurve: () => void;
+  onStraightenEdge: () => void;
+  onChangeCurveHandle: (x: number, y: number) => void;
 }) {
   if (props.node) return <NodeInspector node={props.node} onChange={props.onChangeNode} />;
-  if (props.edge) return <EdgeInspector edge={props.edge} onChange={props.onChangeEdge} />;
+  if (props.edge) {
+    return (
+      <EdgeInspector
+        edge={props.edge}
+        onChange={props.onChangeEdge}
+        onMakeCurve={props.onMakeEdgeCurve}
+        onResetCurve={props.onResetEdgeCurve}
+        onStraighten={props.onStraightenEdge}
+        onChangeCurveHandle={props.onChangeCurveHandle}
+      />
+    );
+  }
 
   return (
     <section>
@@ -30,7 +45,16 @@ function NodeInspector(props: { node: MapNode; onChange: (node: MapNode) => void
   );
 }
 
-function EdgeInspector(props: { edge: MapEdge; onChange: (edge: MapEdge) => void }) {
+function EdgeInspector(props: {
+  edge: MapEdge;
+  onChange: (edge: MapEdge) => void;
+  onMakeCurve: () => void;
+  onResetCurve: () => void;
+  onStraighten: () => void;
+  onChangeCurveHandle: (x: number, y: number) => void;
+}) {
+  const supportedCurve = isSupportedQuadraticBezier(props.edge.trajectory);
+  const handle = getQuadraticBezierHandle(props.edge.trajectory);
   return (
     <section>
       <h2>Edge</h2>
@@ -51,7 +75,26 @@ function EdgeInspector(props: { edge: MapEdge; onChange: (edge: MapEdge) => void
         <input type="checkbox" checked={props.edge.rotationAllowed} onChange={(event) => props.onChange({ ...props.edge, rotationAllowed: event.target.checked })} />
         Rotation allowed
       </label>
-      <p className="muted">Trajectory data is preserved for LIF import/export, but editing curves is intentionally outside this MVP.</p>
+      <div className="curve-actions">
+        <button className="secondary-button" type="button" onClick={props.onMakeCurve} disabled={supportedCurve}>
+          Make curve
+        </button>
+        <button className="secondary-button" type="button" onClick={props.onResetCurve}>
+          Reset curve
+        </button>
+        <button className="secondary-button danger" type="button" onClick={props.onStraighten} disabled={!props.edge.trajectory}>
+          Straighten
+        </button>
+      </div>
+      {props.edge.trajectory && !supportedCurve && (
+        <p className="muted">This imported trajectory is preserved, but reset it before editing as a quadratic curve.</p>
+      )}
+      {handle && (
+        <>
+          <NumberField label="Curve handle X" value={handle.x} onChange={(x) => props.onChangeCurveHandle(x, handle.y)} />
+          <NumberField label="Curve handle Y" value={handle.y} onChange={(y) => props.onChangeCurveHandle(handle.x, y)} />
+        </>
+      )}
     </section>
   );
 }

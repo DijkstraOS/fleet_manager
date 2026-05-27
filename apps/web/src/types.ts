@@ -1,2 +1,2 @@
 export type WorkspaceMode = "map" | "routes" | "tracking";
-export type Tool = "select" | "node" | "edge";
+export type Tool = "select" | "node" | "edge" | "background";

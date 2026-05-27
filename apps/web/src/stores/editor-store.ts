@@ -2,22 +2,44 @@ import { create } from "zustand";
 import {
   createDemoMap,
   findEdge,
+  findNode,
+  isSupportedQuadraticBezier,
   nextEdgeId,
   nextNodeId,
+  resetEdgeToQuadraticBezier,
   slugify,
+  setQuadraticBezierHandle,
+  syncMapEdgeTrajectoryEndpoints,
+  syncTrajectoryEndpoints,
   type MapDocument,
   type MapEdge,
   type MapNode,
 } from "@agv/core";
-import type { CanvasBounds } from "../lib/geometry";
+import { fitRectToBounds, getNodeBounds, type CanvasBounds } from "../lib/geometry";
+import type { BackgroundImageMediaType, ReadBackgroundImage } from "../lib/background-image";
 import type { Tool, WorkspaceMode } from "../types";
 
 export type Selection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
+
+export interface EditorBackgroundImage {
+  src: string;
+  fileName: string;
+  mediaType: BackgroundImageMediaType;
+  naturalWidth: number;
+  naturalHeight: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  locked: boolean;
+}
 
 export interface EditorState {
   map: MapDocument;
   workspaceMode: WorkspaceMode;
   tool: Tool;
+  backgroundImage: EditorBackgroundImage | null;
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
@@ -25,7 +47,7 @@ export interface EditorState {
   viewport: CanvasBounds | null;
   status: string;
   setStatus: (status: string) => void;
-  setMapDocument: (map: MapDocument, status?: string) => void;
+  setMapDocument: (map: MapDocument, status?: string, options?: { preserveBackground?: boolean }) => void;
   updateMap: (updater: (map: MapDocument) => MapDocument) => void;
   renameMap: (name: string) => void;
   setWorkspaceMode: (workspaceMode: WorkspaceMode) => void;
@@ -37,6 +59,16 @@ export interface EditorState {
   addNodeAt: (x: number, y: number) => void;
   handleEdgeNode: (nodeId: string) => void;
   addReverseEdgeForSelection: () => void;
+  attachBackgroundImage: (image: ReadBackgroundImage) => void;
+  updateBackgroundImage: (updater: (backgroundImage: EditorBackgroundImage) => EditorBackgroundImage) => void;
+  fitBackgroundImageToMap: () => void;
+  setBackgroundImageOpacity: (opacity: number) => void;
+  setBackgroundImageLocked: (locked: boolean) => void;
+  removeBackgroundImage: () => void;
+  makeSelectedEdgeCurve: () => void;
+  resetSelectedEdgeCurve: () => void;
+  straightenSelectedEdge: () => void;
+  updateSelectedEdgeCurveHandle: (x: number, y: number) => void;
   addRouteNode: (nodeId: string) => void;
   beginDragNode: (nodeId: string) => void;
   dragNodeTo: (x: number, y: number) => void;
@@ -51,6 +83,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   map: createDemoMap(),
   workspaceMode: "map",
   tool: "select",
+  backgroundImage: null,
   selection: null,
   edgeStartNodeId: null,
   routeNodeIds: [],
@@ -60,15 +93,16 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   setStatus: (status) => set({ status }),
 
-  setMapDocument: (map, status) => set({
+  setMapDocument: (map, status, options) => set((state) => ({
     map,
+    backgroundImage: options?.preserveBackground ? state.backgroundImage : null,
     selection: null,
     edgeStartNodeId: null,
     routeNodeIds: [],
     dragNodeId: null,
     viewport: null,
     ...(status !== undefined ? { status } : {}),
-  }),
+  })),
 
   updateMap: (updater) => set((state) => ({
     map: {
@@ -190,6 +224,104 @@ export const useEditorStore = create<EditorState>((set) => ({
     };
   }),
 
+  attachBackgroundImage: (image) => set((state) => {
+    const naturalWidth = positiveOr(image.naturalWidth, 100);
+    const naturalHeight = positiveOr(image.naturalHeight, 100);
+    const placement = fitRectToBounds(getNodeBounds(state.map), naturalWidth, naturalHeight);
+    return {
+      tool: "background",
+      selection: null,
+      edgeStartNodeId: null,
+      backgroundImage: {
+        src: image.src,
+        fileName: image.fileName,
+        mediaType: image.mediaType,
+        naturalWidth,
+        naturalHeight,
+        ...placement,
+        opacity: 0.65,
+        locked: false,
+      },
+      status: `Added background image ${image.fileName}.`,
+    };
+  }),
+
+  updateBackgroundImage: (updater) => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: normalizeBackgroundImage(updater(state.backgroundImage)),
+    };
+  }),
+
+  fitBackgroundImageToMap: () => set((state) => {
+    const backgroundImage = state.backgroundImage;
+    if (!backgroundImage) return {};
+    const placement = fitRectToBounds(
+      getNodeBounds(state.map),
+      backgroundImage.naturalWidth,
+      backgroundImage.naturalHeight
+    );
+    return {
+      backgroundImage: normalizeBackgroundImage({ ...backgroundImage, ...placement }),
+      status: "Fit background image to map.",
+    };
+  }),
+
+  setBackgroundImageOpacity: (opacity) => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: normalizeBackgroundImage({ ...state.backgroundImage, opacity }),
+    };
+  }),
+
+  setBackgroundImageLocked: (locked) => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: { ...state.backgroundImage, locked },
+      status: locked ? "Locked background image." : "Unlocked background image.",
+    };
+  }),
+
+  removeBackgroundImage: () => set((state) => {
+    if (!state.backgroundImage) return {};
+    return {
+      backgroundImage: null,
+      tool: state.tool === "background" ? "select" : state.tool,
+      status: "Removed background image.",
+    };
+  }),
+
+  makeSelectedEdgeCurve: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const next = updateSelectedEdgeTrajectory(state, (edge, from, to) => {
+      const synced = syncTrajectoryEndpoints(edge, from, to);
+      if (isSupportedQuadraticBezier(synced.trajectory)) return synced;
+      return resetEdgeToQuadraticBezier(edge, from, to);
+    });
+    return next ? { ...next, status: "Converted edge to curve." } : {};
+  }),
+
+  resetSelectedEdgeCurve: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const next = updateSelectedEdgeTrajectory(state, (edge, from, to) =>
+      resetEdgeToQuadraticBezier(edge, from, to)
+    );
+    return next ? { ...next, status: "Reset edge curve." } : {};
+  }),
+
+  straightenSelectedEdge: () => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    const next = updateSelectedEdgeTrajectory(state, (edge) => ({ ...edge, trajectory: null }));
+    return next ? { ...next, status: "Straightened edge." } : {};
+  }),
+
+  updateSelectedEdgeCurveHandle: (x, y) => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    return updateSelectedEdgeTrajectory(state, (edge, from, to) =>
+      setQuadraticBezierHandle(edge, from, to, { x, y })
+    ) || {};
+  }),
+
   addRouteNode: (nodeId) => set((state) => {
     const last = state.routeNodeIds[state.routeNodeIds.length - 1];
     if (!last) return { routeNodeIds: [nodeId] };
@@ -204,12 +336,14 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   dragNodeTo: (x, y) => set((state) => {
     if (!state.dragNodeId || state.tool !== "select") return {};
+    const nodes = state.map.nodes.map((node) =>
+      node.id === state.dragNodeId ? { ...node, x, y } : node
+    );
     return {
       map: {
         ...state.map,
-        nodes: state.map.nodes.map((node) =>
-          node.id === state.dragNodeId ? { ...node, x, y } : node
-        ),
+        nodes,
+        edges: syncMapEdgeTrajectoryEndpoints(state.map.edges, nodes),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -245,17 +379,19 @@ export const useEditorStore = create<EditorState>((set) => ({
   updateNode: (next) => set((state) => {
     if (state.selection?.type !== "node") return {};
     const previousId = state.selection.id;
+    const nodes = state.map.nodes.map((node) => node.id === previousId ? next : node);
+    const edges = state.map.edges.map((edge) => ({
+      ...edge,
+      from: edge.from === previousId ? next.id : edge.from,
+      to: edge.to === previousId ? next.id : edge.to,
+    }));
     return {
       selection: { type: "node", id: next.id },
       routeNodeIds: state.routeNodeIds.map((nodeId) => nodeId === previousId ? next.id : nodeId),
       map: {
         ...state.map,
-        nodes: state.map.nodes.map((node) => node.id === previousId ? next : node),
-        edges: state.map.edges.map((edge) => ({
-          ...edge,
-          from: edge.from === previousId ? next.id : edge.from,
-          to: edge.to === previousId ? next.id : edge.to,
-        })),
+        nodes,
+        edges: syncMapEdgeTrajectoryEndpoints(edges, nodes),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -263,11 +399,14 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   updateEdge: (next) => set((state) => {
     if (state.selection?.type !== "edge") return {};
+    const from = findNode(state.map, next.from);
+    const to = findNode(state.map, next.to);
+    const synced = syncTrajectoryEndpoints(next, from, to);
     return {
-      selection: { type: "edge", id: next.id },
+      selection: { type: "edge", id: synced.id },
       map: {
         ...state.map,
-        edges: state.map.edges.map((edge) => edge.id === state.selection?.id ? next : edge),
+        edges: state.map.edges.map((edge) => edge.id === state.selection?.id ? synced : edge),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -275,3 +414,38 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   clearRoute: () => set({ routeNodeIds: [] }),
 }));
+
+function normalizeBackgroundImage(backgroundImage: EditorBackgroundImage): EditorBackgroundImage {
+  return {
+    ...backgroundImage,
+    naturalWidth: positiveOr(backgroundImage.naturalWidth, 100),
+    naturalHeight: positiveOr(backgroundImage.naturalHeight, 100),
+    width: positiveOr(backgroundImage.width, 0.5),
+    height: positiveOr(backgroundImage.height, 0.5),
+    opacity: Math.min(1, Math.max(0, backgroundImage.opacity)),
+  };
+}
+
+function positiveOr(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function updateSelectedEdgeTrajectory(
+  state: EditorState,
+  updater: (edge: MapEdge, from: MapNode, to: MapNode) => MapEdge
+): Pick<EditorState, "map"> | null {
+  if (state.selection?.type !== "edge") return null;
+  const edge = state.map.edges.find((item) => item.id === state.selection?.id);
+  if (!edge) return null;
+  const from = findNode(state.map, edge.from);
+  const to = findNode(state.map, edge.to);
+  if (!from || !to) return null;
+  const next = updater(edge, from, to);
+  return {
+    map: {
+      ...state.map,
+      edges: state.map.edges.map((item) => item.id === edge.id ? next : item),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
