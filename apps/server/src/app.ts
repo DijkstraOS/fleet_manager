@@ -21,7 +21,7 @@ import type { MapRepository, RealtimePublisher, RouteRepository } from "./domain
 export interface AgvServerOptions {
   port?: number;
   host?: string;
-  mqttPort?: number;
+  mqttBroker?: string;
   interfaceName?: string;
   mapStorePath?: string;
   routeStorePath?: string;
@@ -35,7 +35,7 @@ export interface AgvServerRuntime {
   mqttHub: MqttFleetGateway;
   realtime: RealtimePublisher;
   port: number;
-  mqttPort: number;
+  mqttBroker: string;
   interfaceName: string;
   start: () => Promise<void>;
   close: () => Promise<void>;
@@ -43,7 +43,7 @@ export interface AgvServerRuntime {
 
 export async function createAgvServer(options: AgvServerOptions = {}): Promise<AgvServerRuntime> {
   const port = options.port ?? 4000;
-  const mqttPort = options.mqttPort ?? 1883;
+  const mqttBroker = options.mqttBroker ?? "mqtt://127.0.0.1:1883";
   const host = options.host ?? "0.0.0.0";
   const interfaceName = options.interfaceName ?? "agv-new";
 
@@ -60,7 +60,7 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
   const realtime = createRealtimePublisher(fastify.server);
   const orderTracker = createOrderTracker();
   const mqttHub = createMqttFleetGateway({
-    port: mqttPort,
+    brokerUrl: mqttBroker,
     interfaceName,
     onAgvState: (agv) => {
       realtime.broadcast({
@@ -97,7 +97,7 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
     mqttHub,
     realtime,
     port,
-    mqttPort,
+    mqttBroker,
     interfaceName,
     start: async () => {
       await mqttHub.start();

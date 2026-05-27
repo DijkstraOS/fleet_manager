@@ -50,9 +50,10 @@ The pass should answer four questions:
 - 2026-05-20 finding: the server is also a client of that broker. It uses `MasterControlClient` to subscribe to AGV `state`, `visualization`, and `connection` topics and to publish `order` topics.
 - 2026-05-20 finding: the simulator uses one `AgvClient` per simulated AGV. Each simulated AGV connects to the broker as an MQTT client, subscribes to `order`, and publishes `state` and `visualization`.
 - 2026-05-20 finding: the topology is therefore broker-based, not direct server-to-AGV messaging. The current broker is simply embedded in the server process for local convenience.
+- 2026-05-27 update: the server no longer hosts Aedes in-process. Local development starts `apps/broker` as a separate Aedes process, and the server and simulator connect through `MQTT_BROKER`.
 - 2026-05-20 risk: Aedes is an embedded Node broker and its npm docs list MQTT 3.1/3.1.1 support while saying MQTT 5.0 is not supported yet. This may be acceptable for VDA 5050 v2.1 if field clients use MQTT 3.1.1, but it should not be assumed for production without checking the target AGV/broker requirements.
 - 2026-05-20 risk: an embedded broker is useful for a self-contained demo, but it does not validate against the operational model likely used on-site: a separately managed broker with authentication, authorization, TLS, logging, retention/session settings, and broker-level monitoring.
-- 2026-05-20 recommendation: keep embedded Aedes as the default development broker, but add a first-class external broker mode and test against at least Mosquitto and one heavier production broker candidate such as EMQX or HiveMQ.
+- 2026-05-20 recommendation, now partially closed: move beyond in-process Aedes by adding a first-class external broker mode and test against at least Mosquitto and one heavier production broker candidate such as EMQX or HiveMQ.
 
 ### LIF
 
@@ -219,9 +220,9 @@ Tasks:
   - server as master-control MQTT client;
   - each AGV as an MQTT client;
   - web UI as HTTP/WebSocket client of the server, not a direct MQTT participant unless explicitly required.
-- Add configuration for "external broker mode" so the server can skip creating Aedes and instead connect to an existing broker URL.
+- Keep `MQTT_BROKER` as the server/simulator contract so the server can connect to an existing broker URL.
 - Test the same order/state/visualization/connection flow against:
-  - embedded Aedes;
+  - local standalone Aedes;
   - Eclipse Mosquitto;
   - one production broker candidate such as EMQX or HiveMQ.
 - Validate broker-level behavior that matters for field deployment:
@@ -285,7 +286,7 @@ Acceptance:
 | LIF version target needs confirmation | Export now writes `lifVersion: "1.0.0"` to match the integrated `vdma-lif` package; earlier inspected guideline note mentioned `0.11.0` | Medium | Confirm target LIF version with client/tooling before external certification |
 | LIF round trip may still be lossy | Additional layouts are still dropped; many LIF fields are preserved passively but not editable or operationally interpreted | High | Create external fixtures and run semantic diffs against external editors |
 | LIF unsupported-field preservation is partial | Stations and vehicle properties now survive local round trips, but the preservation envelope is internal and not yet proven against real editor outputs | Medium | Validate with Fletr and another LIF editor fixture |
-| Embedded broker not field-representative | Current server hosts Aedes in-process; production sites usually manage broker auth/TLS/monitoring separately | High | Add external broker mode and test with Mosquitto/EMQX/HiveMQ |
+| Embedded broker not field-representative | Local development now runs Aedes as a separate process, but production sites usually manage broker auth/TLS/monitoring separately | Medium | Test the same flow with Mosquitto/EMQX/HiveMQ |
 | Broker feature mismatch | Aedes docs list MQTT 3.1/3.1.1 and no MQTT 5.0 support; target field broker requirements are not known yet | Medium | Confirm required MQTT protocol version and broker capabilities with client/AGV vendor |
 | Simulator/server overfit | Current green tests exercise local server plus local simulator | Medium | Add external dummy AGV and external master/control harness checks |
 | External compatibility has no fixture suite | Existing tests use demo/local maps only | Medium | Add fixtures from external LIF editors and official VDA schemas |

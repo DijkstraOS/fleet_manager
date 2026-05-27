@@ -5,9 +5,10 @@ export function loadSimulatorConfig(
   argv = process.argv.slice(2)
 ): SimulatorClientOptions {
   const args = parseArgs(argv);
+  const mqttPort = readNumber(args, "mqtt-port", env.MQTT_PORT) ?? 1883;
   const config: SimulatorClientOptions = {
     serverUrl: readString(args, "server-url", env.SERVER_URL) || "http://127.0.0.1:4000",
-    mqttBroker: readString(args, "mqtt-broker", env.MQTT_BROKER) || "mqtt://127.0.0.1:1883",
+    mqttBroker: readString(args, "mqtt-broker", env.MQTT_BROKER) || `mqtt://127.0.0.1:${mqttPort}`,
     interfaceName: readString(args, "interface-name", env.INTERFACE_NAME) || "agv-new",
     agvCount: readNumber(args, "agvs", env.AGV_COUNT) ?? 1,
     serialPrefix: readString(args, "serial-prefix", env.SERIAL_PREFIX) || "SIM",

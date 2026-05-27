@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createDemoMap } from "@agv/core";
 import { expect, test } from "vitest";
+import { createLocalBroker } from "../../apps/broker/src/runtime";
 import { createAgvServer } from "../../apps/server/src/app";
 import { createSimulatorClient } from "../../apps/simulator/src/runtime";
 
@@ -11,10 +12,12 @@ test("creates a map, starts a simulator AGV client, sends an order, and complete
   const tempDir = await mkdtemp(join(tmpdir(), "agv-new-runtime-"));
   const port = await getFreePort();
   const mqttPort = await getFreePort();
+  const mqttBroker = `mqtt://127.0.0.1:${mqttPort}`;
   const interfaceName = `agv-test-${Date.now()}`;
+  const broker = createLocalBroker({ port: mqttPort, log: false });
   const server = await createAgvServer({
     port,
-    mqttPort,
+    mqttBroker,
     interfaceName,
     mapStorePath: join(tempDir, "maps.json"),
     logger: false,
@@ -24,12 +27,13 @@ test("creates a map, starts a simulator AGV client, sends an order, and complete
   let simulator: ReturnType<typeof createSimulatorClient> | null = null;
 
   try {
+    await broker.start();
     await server.start();
     await postJson(`${apiBase}/api/maps`, map);
 
     simulator = createSimulatorClient({
       serverUrl: apiBase,
-      mqttBroker: `mqtt://127.0.0.1:${mqttPort}`,
+      mqttBroker,
       interfaceName,
       mapId: map.id,
       agvCount: 1,
@@ -70,9 +74,30 @@ test("creates a map, starts a simulator AGV client, sends an order, and complete
   } finally {
     await simulator?.stop();
     await server.close();
+    await broker.close();
     await rm(tempDir, { recursive: true, force: true });
   }
 }, 15_000);
+
+test("server creation does not open or own the MQTT broker port", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "agv-new-no-broker-"));
+  const port = await getFreePort();
+  const mqttPort = await getFreePort();
+  const server = await createAgvServer({
+    port,
+    mqttBroker: `mqtt://127.0.0.1:${mqttPort}`,
+    interfaceName: `agv-no-broker-${Date.now()}`,
+    mapStorePath: join(tempDir, "maps.json"),
+    logger: false,
+  });
+
+  try {
+    await expectPortAvailable(mqttPort);
+  } finally {
+    await server.close();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
 
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, {
@@ -115,6 +140,20 @@ async function getFreePort() {
       }
       const port = address.port;
       server.close(() => resolve(port));
+    });
+  });
+}
+
+async function expectPortAvailable(port: number) {
+  const server = net.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
     });
   });
 }

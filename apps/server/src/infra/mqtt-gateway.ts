@@ -1,16 +1,10 @@
-import { createRequire } from "node:module";
-import net from "node:net";
 import mqtt, { type MqttClient } from "mqtt";
-import type { createBroker as createBrokerType } from "aedes";
 import { VDA_5050_VERSION, type ConnectionStatus, type VdaOrder, type VdaPublishedOrder, type VdaState, type VdaVisualization } from "@agv/core";
 import { ConnectionState as VdaConnectionState, MasterControlClient, Topic, type AgvId } from "vda-5050-lib";
 import type { FleetGateway, KnownAgv } from "../domain/ports";
 
-const require = createRequire(import.meta.url);
-const createBroker = require("aedes") as typeof createBrokerType;
-
 export interface MqttFleetGatewayOptions {
-  port: number;
+  brokerUrl: string;
   interfaceName: string;
   onAgvState: (agv: KnownAgv) => void;
   onAgvVisualization: (agv: KnownAgv) => void;
@@ -22,13 +16,10 @@ export interface MqttFleetGateway extends FleetGateway {
 }
 
 export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFleetGateway {
-  const brokerUrl = `mqtt://127.0.0.1:${options.port}`;
-  const broker = createBroker();
-  const brokerServer = net.createServer(broker.handle);
+  const brokerUrl = options.brokerUrl;
   const agvs = new Map<string, KnownAgv>();
   let masterClient: MasterControlClient | null = null;
   let statusClient: MqttClient | null = null;
-  let started = false;
 
   function parse(payload: Buffer): Record<string, unknown> {
     try {
@@ -71,14 +62,7 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
     brokerUrl,
 
     start: async () => {
-      await new Promise<void>((resolve, reject) => {
-        brokerServer.once("error", reject);
-        brokerServer.listen(options.port, () => {
-          brokerServer.off("error", reject);
-          started = true;
-          resolve();
-        });
-      });
+      await waitForMqttBroker(brokerUrl);
 
       masterClient = new MasterControlClient({
         interfaceName: options.interfaceName,
@@ -122,18 +106,6 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
       const activeMasterClient = masterClient;
       masterClient = null;
       if (activeMasterClient) await activeMasterClient.stop();
-      if (started) {
-        await new Promise<void>((resolve, reject) => {
-          brokerServer.close((error) => {
-            if (error) reject(error);
-            else {
-              started = false;
-              resolve();
-            }
-          });
-        });
-      }
-      await new Promise<void>((resolve) => broker.close(resolve));
     },
 
     listAgvs: () => Array.from(agvs.values()),
@@ -146,6 +118,47 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
       }, order);
     },
   };
+}
+
+async function waitForMqttBroker(brokerUrl: string, timeoutMs = 30_000): Promise<void> {
+  const startedAt = Date.now();
+  let lastError: unknown;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      await probeMqttBroker(brokerUrl);
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+
+  throw new Error(`MQTT broker ${brokerUrl} was not reachable within ${timeoutMs}ms: ${formatError(lastError)}`);
+}
+
+function probeMqttBroker(brokerUrl: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const client = mqtt.connect(brokerUrl, {
+      clientId: `agv-server-probe-${Math.floor(Math.random() * 100000)}`,
+      reconnectPeriod: 0,
+      connectTimeout: 1000,
+    });
+    let settled = false;
+
+    function finish(error?: Error) {
+      if (settled) return;
+      settled = true;
+      client.end(true, () => {
+        if (error) reject(error);
+        else resolve();
+      });
+    }
+
+    client.once("connect", () => finish());
+    client.once("error", finish);
+    client.once("close", () => finish(new Error("connection closed")));
+  });
 }
 
 function connectMqtt(client: MqttClient): Promise<void> {
@@ -162,6 +175,14 @@ function subscribeMqtt(client: MqttClient, topic: string): Promise<void> {
       else resolve();
     });
   });
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function closeMqtt(client: MqttClient): Promise<void> {

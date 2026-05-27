@@ -53,7 +53,7 @@ export function createSimulatorClient(options: SimulatorClientOptions = {}): Sim
   return {
     start: async () => {
       await transport.start();
-      const map = await loadMap(mapClient, options.mapId);
+      const map = await loadMapWithRetry(mapClient, options.mapId);
       for (const command of buildStartupAgvCommands({
           map,
           agvCount,
@@ -77,6 +77,22 @@ export function createSimulatorClient(options: SimulatorClientOptions = {}): Sim
   };
 }
 
+async function loadMapWithRetry(mapClient: MapClient, mapId?: string, timeoutMs = 30_000): Promise<MapDocument> {
+  const startedAt = Date.now();
+  let lastError: unknown;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      return await loadMap(mapClient, mapId);
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+
+  throw new Error(`Could not load simulator map within ${timeoutMs}ms: ${formatError(lastError)}`);
+}
+
 async function loadMap(mapClient: MapClient, mapId?: string): Promise<MapDocument> {
   if (mapId) return mapClient.getMap(mapId);
   const maps = await mapClient.listMaps();
@@ -90,3 +106,11 @@ const nullPublisher = {
   publishConnection: () => {},
   publishOrderStatus: () => {},
 };
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
