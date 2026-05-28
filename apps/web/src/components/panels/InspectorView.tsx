@@ -1,4 +1,5 @@
 import { getQuadraticBezierHandle, isSupportedQuadraticBezier, type MapEdge, type MapNode } from "@agv/core";
+import { Scissors } from "lucide-react";
 
 export function InspectorView(props: {
   node: MapNode | null;
@@ -8,6 +9,10 @@ export function InspectorView(props: {
   onMakeEdgeCurve: () => void;
   onResetEdgeCurve: () => void;
   onStraightenEdge: () => void;
+  hasReverseEdge: boolean;
+  includeReverseEdge: boolean;
+  onIncludeReverseEdgeChange: (includeReverseEdge: boolean) => void;
+  onBifurcateEdge: () => void;
   onChangeCurveHandle: (x: number, y: number) => void;
 }) {
   if (props.node) return <NodeInspector node={props.node} onChange={props.onChangeNode} />;
@@ -19,6 +24,10 @@ export function InspectorView(props: {
         onMakeCurve={props.onMakeEdgeCurve}
         onResetCurve={props.onResetEdgeCurve}
         onStraighten={props.onStraightenEdge}
+        hasReverseEdge={props.hasReverseEdge}
+        includeReverseEdge={props.includeReverseEdge}
+        onIncludeReverseEdgeChange={props.onIncludeReverseEdgeChange}
+        onBifurcate={props.onBifurcateEdge}
         onChangeCurveHandle={props.onChangeCurveHandle}
       />
     );
@@ -51,6 +60,10 @@ function EdgeInspector(props: {
   onMakeCurve: () => void;
   onResetCurve: () => void;
   onStraighten: () => void;
+  hasReverseEdge: boolean;
+  includeReverseEdge: boolean;
+  onIncludeReverseEdgeChange: (includeReverseEdge: boolean) => void;
+  onBifurcate: () => void;
   onChangeCurveHandle: (x: number, y: number) => void;
 }) {
   const supportedCurve = isSupportedQuadraticBezier(props.edge.trajectory);
@@ -75,7 +88,20 @@ function EdgeInspector(props: {
         <input type="checkbox" checked={props.edge.rotationAllowed} onChange={(event) => props.onChange({ ...props.edge, rotationAllowed: event.target.checked })} />
         Rotation allowed
       </label>
+      {props.hasReverseEdge && (
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={props.includeReverseEdge}
+            onChange={(event) => props.onIncludeReverseEdgeChange(event.target.checked)}
+          />
+          Include reverse edge
+        </label>
+      )}
       <div className="curve-actions">
+        <button className="secondary-button" type="button" onClick={props.onBifurcate}>
+          <Scissors /> Bifurcate edge
+        </button>
         <button className="secondary-button" type="button" onClick={props.onMakeCurve} disabled={supportedCurve}>
           Make curve
         </button>

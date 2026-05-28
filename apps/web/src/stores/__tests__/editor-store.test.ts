@@ -136,6 +136,157 @@ describe("editor store", () => {
     expect(edge.trajectory).toBeNull();
   });
 
+  it("applies curve actions to the reverse edge when explicitly included", () => {
+    const store = useEditorStore.getState();
+    store.selectEdge("dock-a-corr-1");
+    store.makeSelectedEdgeCurve({ includeReverse: true });
+
+    let forward = useEditorStore.getState().map.edges.find((edge) => edge.from === "dock-a" && edge.to === "corr-1")!;
+    let reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
+    expect(isSupportedQuadraticBezier(forward.trajectory)).toBe(true);
+    expect(isSupportedQuadraticBezier(reverse.trajectory)).toBe(true);
+    expect(forward.trajectory?.controlPoints).toMatchObject([
+      { x: 0, y: 0 },
+      { x: 2.5, y: 1.25 },
+      { x: 5, y: 0 },
+    ]);
+    expect(reverse.trajectory?.controlPoints).toMatchObject([
+      { x: 5, y: 0 },
+      { x: 2.5, y: 1.25 },
+      { x: 0, y: 0 },
+    ]);
+
+    useEditorStore.getState().updateSelectedEdgeCurveHandle(2.5, 3);
+    forward = useEditorStore.getState().map.edges.find((edge) => edge.from === "dock-a" && edge.to === "corr-1")!;
+    reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
+    expect(forward.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 3 });
+    expect(reverse.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 3 });
+
+    useEditorStore.getState().selectEdge("corr-1-dock-a");
+    useEditorStore.getState().updateSelectedEdgeCurveHandle(2.5, -2);
+    forward = useEditorStore.getState().map.edges.find((edge) => edge.from === "dock-a" && edge.to === "corr-1")!;
+    reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
+    expect(forward.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: -2 });
+    expect(reverse.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: -2 });
+
+    useEditorStore.getState().selectEdge("dock-a-corr-1");
+    useEditorStore.getState().straightenSelectedEdge({ includeReverse: true });
+    forward = useEditorStore.getState().map.edges.find((edge) => edge.from === "dock-a" && edge.to === "corr-1")!;
+    reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
+    expect(forward.trajectory).toBeNull();
+    expect(reverse.trajectory).toBeNull();
+
+    useEditorStore.getState().resetSelectedEdgeCurve({ includeReverse: true });
+    forward = useEditorStore.getState().map.edges.find((edge) => edge.from === "dock-a" && edge.to === "corr-1")!;
+    reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
+    expect(isSupportedQuadraticBezier(forward.trajectory)).toBe(true);
+    expect(isSupportedQuadraticBezier(reverse.trajectory)).toBe(true);
+    expect(forward.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 1.25 });
+    expect(reverse.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 1.25 });
+  });
+
+  it("bifurcates only the selected directed edge", () => {
+    const store = useEditorStore.getState();
+    store.selectEdge("dock-a-corr-1");
+    store.bifurcateSelectedEdge();
+
+    const next = useEditorStore.getState();
+    const inserted = next.map.nodes.find((node) => node.id === "n-10");
+
+    expect(inserted).toMatchObject({ id: "n-10", x: 2.5, y: 0 });
+    expect(next.selection).toEqual({ type: "node", id: "n-10" });
+    expect(next.map.edges.some((edge) => edge.id === "dock-a-corr-1")).toBe(false);
+    expect(next.map.edges.some((edge) => edge.from === "corr-1" && edge.to === "dock-a")).toBe(true);
+    expect(next.map.edges.map((edge) => `${edge.from}->${edge.to}`)).toContain("dock-a->n-10");
+    expect(next.map.edges.map((edge) => `${edge.from}->${edge.to}`)).toContain("n-10->corr-1");
+  });
+
+  it("bifurcates the reverse edge when explicitly included", () => {
+    const store = useEditorStore.getState();
+    store.selectEdge("dock-a-corr-1");
+    store.bifurcateSelectedEdge({ includeReverse: true });
+
+    const next = useEditorStore.getState();
+    const edgeDirections = next.map.edges.map((edge) => `${edge.from}->${edge.to}`);
+
+    expect(next.map.nodes.find((node) => node.id === "n-10")).toMatchObject({ x: 2.5, y: 0 });
+    expect(edgeDirections).not.toContain("dock-a->corr-1");
+    expect(edgeDirections).not.toContain("corr-1->dock-a");
+    expect(edgeDirections).toContain("dock-a->n-10");
+    expect(edgeDirections).toContain("n-10->corr-1");
+    expect(edgeDirections).toContain("corr-1->n-10");
+    expect(edgeDirections).toContain("n-10->dock-a");
+  });
+
+  it("does not half-apply reverse bifurcation when the reverse trajectory is unsupported", () => {
+    const map = createDemoMap();
+    const reverse = map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
+    reverse.trajectory = {
+      degree: 3,
+      knotVector: [0, 0, 0, 0, 1, 1, 1, 1],
+      controlPoints: [
+        { x: 5, y: 0 },
+        { x: 4, y: 3 },
+        { x: 1, y: 3 },
+        { x: 0, y: 0 },
+      ],
+    };
+    useEditorStore.setState({ map });
+
+    useEditorStore.getState().selectEdge("dock-a-corr-1");
+    useEditorStore.getState().bifurcateSelectedEdge({ includeReverse: true });
+
+    const next = useEditorStore.getState();
+    expect(next.map.nodes).toHaveLength(map.nodes.length);
+    expect(next.map.edges).toHaveLength(map.edges.length);
+    expect(next.map.edges.some((edge) => edge.id === "dock-a-corr-1")).toBe(true);
+    expect(next.status).toBe("Reset unsupported reverse edge trajectory before bifurcating both directions.");
+  });
+
+  it("preserves supported curve shape when bifurcating a selected edge", () => {
+    const store = useEditorStore.getState();
+    store.selectEdge("dock-a-corr-1");
+    store.makeSelectedEdgeCurve();
+    useEditorStore.getState().updateSelectedEdgeCurveHandle(2.5, 3);
+
+    useEditorStore.getState().bifurcateSelectedEdge();
+
+    const next = useEditorStore.getState();
+    const inserted = next.map.nodes.find((node) => node.id === "n-10")!;
+    const first = next.map.edges.find((edge) => edge.from === "dock-a" && edge.to === "n-10")!;
+    const second = next.map.edges.find((edge) => edge.from === "n-10" && edge.to === "corr-1")!;
+
+    expect(inserted.x).toBeCloseTo(2.5);
+    expect(inserted.y).toBeCloseTo(1.5);
+    expect(isSupportedQuadraticBezier(first.trajectory)).toBe(true);
+    expect(isSupportedQuadraticBezier(second.trajectory)).toBe(true);
+    expect(first.trajectory?.controlPoints[1]).toMatchObject({ x: 1.25, y: 1.5 });
+    expect(second.trajectory?.controlPoints[1]).toMatchObject({ x: 3.75, y: 1.5 });
+  });
+
+  it("does not bifurcate unsupported imported trajectories", () => {
+    const map = createDemoMap();
+    map.edges[0]!.trajectory = {
+      degree: 3,
+      knotVector: [0, 0, 0, 0, 1, 1, 1, 1],
+      controlPoints: [
+        { x: 0, y: 0 },
+        { x: 1, y: 3 },
+        { x: 4, y: 3 },
+        { x: 5, y: 0 },
+      ],
+    };
+    useEditorStore.setState({ map });
+
+    useEditorStore.getState().selectEdge("dock-a-corr-1");
+    useEditorStore.getState().bifurcateSelectedEdge();
+
+    const next = useEditorStore.getState();
+    expect(next.map.nodes).toHaveLength(map.nodes.length);
+    expect(next.map.edges).toHaveLength(map.edges.length);
+    expect(next.status).toBe("Reset unsupported imported trajectory before bifurcating this edge.");
+  });
+
   it("updates node ids and keeps edges and route references aligned", () => {
     const store = useEditorStore.getState();
     store.addRouteNode("dock-a");

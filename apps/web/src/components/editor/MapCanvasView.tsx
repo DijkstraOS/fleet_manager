@@ -203,7 +203,7 @@ function EdgeLayer(props: {
         const routeActive = routeContainsEdge(props.routeNodeIds, edge.from, edge.to);
         const className = edgeClass(active, routeActive, props.workspaceMode);
         const pathData = quadraticBezierSvgPath(edge.trajectory);
-        const line = getStraightLineGeometry(edge, from, to, props.edges);
+        const line = getStraightLineGeometry(edge, from, to, props.edges, props.nodes);
         return (
           <g key={edge.id} onPointerDown={(event) => props.onEdgePointerDown(event, edge.id)}>
             {pathData ? (
@@ -225,19 +225,22 @@ function EdgeLayer(props: {
   );
 }
 
-function getStraightLineGeometry(edge: MapEdge, from: MapNode, to: MapNode, edges: MapEdge[]) {
-  const reverse = edges.find((item) => item.id !== edge.id && item.from === edge.to && item.to === edge.from);
-  const shouldOffset = reverse && !quadraticBezierSvgPath(edge.trajectory) && !quadraticBezierSvgPath(reverse.trajectory);
+function getStraightLineGeometry(edge: MapEdge, from: MapNode, to: MapNode, edges: MapEdge[], nodes: MapNode[]) {
+  const shouldOffset = edges.some((item) => {
+    if (item.id === edge.id || quadraticBezierSvgPath(item.trajectory)) return false;
+    const otherFrom = nodes.find((node) => node.id === item.from);
+    const otherTo = nodes.find((node) => node.id === item.to);
+    return otherFrom && otherTo && straightSegmentsOverlap(from, to, otherFrom, otherTo);
+  });
   if (!shouldOffset) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
 
-  const canonicalFrom = edge.from < edge.to ? from : to;
-  const canonicalTo = edge.from < edge.to ? to : from;
-  const dx = canonicalTo.x - canonicalFrom.x;
-  const dy = canonicalTo.y - canonicalFrom.y;
+  const canonical = canonicalStraightDirection(from, to);
+  const dx = canonical.to.x - canonical.from.x;
+  const dy = canonical.to.y - canonical.from.y;
   const length = Math.hypot(dx, dy);
   if (length <= 0) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
 
-  const side = edge.from < edge.to ? 1 : -1;
+  const side = samePoint(from, canonical.from) && samePoint(to, canonical.to) ? 1 : -1;
   const offsetX = (-dy / length) * STRAIGHT_EDGE_PARALLEL_OFFSET * side;
   const offsetY = (dx / length) * STRAIGHT_EDGE_PARALLEL_OFFSET * side;
   return {
@@ -246,6 +249,40 @@ function getStraightLineGeometry(edge: MapEdge, from: MapNode, to: MapNode, edge
     x2: to.x + offsetX,
     y2: to.y + offsetY,
   };
+}
+
+function straightSegmentsOverlap(aFrom: MapNode, aTo: MapNode, bFrom: MapNode, bTo: MapNode) {
+  const ax = aTo.x - aFrom.x;
+  const ay = aTo.y - aFrom.y;
+  const lengthSquared = ax * ax + ay * ay;
+  if (lengthSquared <= 0) return false;
+  if (Math.abs(cross(ax, ay, bFrom.x - aFrom.x, bFrom.y - aFrom.y)) > 0.001) return false;
+  if (Math.abs(cross(ax, ay, bTo.x - aFrom.x, bTo.y - aFrom.y)) > 0.001) return false;
+
+  const bStart = dot(bFrom.x - aFrom.x, bFrom.y - aFrom.y, ax, ay) / lengthSquared;
+  const bEnd = dot(bTo.x - aFrom.x, bTo.y - aFrom.y, ax, ay) / lengthSquared;
+  const start = Math.max(0, Math.min(bStart, bEnd));
+  const end = Math.min(1, Math.max(bStart, bEnd));
+  return end - start > 0.001;
+}
+
+function canonicalStraightDirection(from: MapNode, to: MapNode) {
+  if (from.x < to.x) return { from, to };
+  if (from.x > to.x) return { from: to, to: from };
+  if (from.y <= to.y) return { from, to };
+  return { from: to, to: from };
+}
+
+function samePoint(left: MapNode, right: MapNode) {
+  return left.id === right.id;
+}
+
+function cross(ax: number, ay: number, bx: number, by: number) {
+  return ax * by - ay * bx;
+}
+
+function dot(ax: number, ay: number, bx: number, by: number) {
+  return ax * bx + ay * by;
 }
 
 function CurveHandleLayer(props: {
