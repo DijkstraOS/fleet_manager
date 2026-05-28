@@ -16,12 +16,14 @@ let map: MapDocument;
 let routes: RouteDocument[];
 let realtimeMessages: RealtimeMessage[];
 let sentOrder: VdaOrder | null;
+let sentOrders: VdaOrder[];
 
 beforeEach(() => {
   map = createDemoMap();
   routes = [];
   realtimeMessages = [];
   sentOrder = null;
+  sentOrders = [];
 });
 
 describe("server services", () => {
@@ -91,6 +93,81 @@ describe("server services", () => {
     expect(result.routeName).toBe("Dock Run");
     expect(tracker.enrich({ orderId: result.orderId, status: "completed" }).routeName).toBe("Dock Run");
   });
+
+  it("reissues a closed looping route after order completion", async () => {
+    const handlers = createOrderHandlers(createRepository(), fleet, realtime);
+
+    const result = await handlers.sendOrder({
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["dock-a", "corr-1", "dock-a"],
+      routeId: "dock-loop",
+      routeName: "Dock Loop",
+      loop: true,
+    });
+
+    expect(result.loop).toBe(true);
+    expect(result.loopIteration).toBe(1);
+    expect(sentOrders).toHaveLength(1);
+
+    handlers.handleOrderStatus({
+      orderId: result.orderId,
+      serialNumber: "SIM-001",
+      status: "completed",
+    });
+    await flushPromises();
+
+    expect(sentOrders).toHaveLength(2);
+    expect(sentOrders[1]?.orderId).not.toBe(result.orderId);
+    expect(realtimeMessages.at(-1)).toMatchObject({
+      type: "order_status",
+      status: "sent",
+      routeName: "Dock Loop",
+      loop: true,
+      loopIteration: 2,
+    });
+  });
+
+  it("rejects open routes in loop mode", async () => {
+    const handlers = createOrderHandlers(createRepository(), fleet, realtime);
+
+    await expect(handlers.sendOrder({
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["dock-a", "corr-1"],
+      loop: true,
+    })).rejects.toMatchObject({
+      statusCode: 400,
+      message: "Looping route must end at its starting node.",
+    });
+    expect(sentOrders).toHaveLength(0);
+  });
+
+  it("stops an active loop before the next completion resend", async () => {
+    const handlers = createOrderHandlers(createRepository(), fleet, realtime);
+
+    const result = await handlers.sendOrder({
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["dock-a", "corr-1", "dock-a"],
+      loop: true,
+    });
+
+    expect(handlers.stopLoop("SIM-001")).toBe(true);
+    handlers.handleOrderStatus({
+      orderId: result.orderId,
+      serialNumber: "SIM-001",
+      status: "completed",
+    });
+    await flushPromises();
+
+    expect(sentOrders).toHaveLength(1);
+    expect(realtimeMessages.at(-1)).toMatchObject({
+      type: "order_status",
+      status: "loop stopped",
+      loop: true,
+    });
+  });
 });
 
 const realtime = {
@@ -105,6 +182,7 @@ const fleet: FleetGateway = {
   getAgv: (serialNumber) => serialNumber === knownAgv.serialNumber ? knownAgv : undefined,
   publishOrder: async (_agv, order) => {
     sentOrder = order;
+    sentOrders.push(order);
     return undefined;
   },
   start: async () => {},
@@ -138,6 +216,10 @@ function createRepository(): MapRepository {
       return next;
     },
   };
+}
+
+async function flushPromises() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function createRouteRepository(): RouteRepository {

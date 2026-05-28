@@ -10,6 +10,8 @@ export interface TrackingPanelOrderStatus {
   orderId: string;
   status: string;
   routeName?: string;
+  loop?: boolean;
+  loopIteration?: number;
 }
 
 export function TrackingPanelView(props: {
@@ -50,7 +52,7 @@ export function TrackingPanelView(props: {
                 </div>
                 <div>
                   <dt>Order status</dt>
-                  <dd>{order?.status || "--"}</dd>
+                  <dd>{order ? formatOrderStatus(order) : "--"}</dd>
                 </div>
               </dl>
             </div>
@@ -63,4 +65,9 @@ export function TrackingPanelView(props: {
       </section>
     </aside>
   );
+}
+
+function formatOrderStatus(order: TrackingPanelOrderStatus) {
+  if (!order.loop) return order.status;
+  return order.loopIteration ? `${order.status} · loop ${order.loopIteration}` : order.status;
 }

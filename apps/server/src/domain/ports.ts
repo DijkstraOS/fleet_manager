@@ -72,6 +72,8 @@ export interface OrderResult {
   order: VdaOrder | VdaPublishedOrder;
   routeId?: string;
   routeName?: string;
+  loop?: boolean;
+  loopIteration?: number;
 }
 
 export type OrderRequest = OrderDraft;
@@ -95,4 +97,6 @@ export interface FleetHandlers {
 
 export interface OrderHandlers {
   sendOrder: (draft: OrderDraft) => Promise<OrderResult>;
+  stopLoop: (serialNumber: string) => boolean;
+  handleOrderStatus: (data: Record<string, unknown>) => void;
 }

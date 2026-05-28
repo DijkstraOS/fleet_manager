@@ -18,6 +18,7 @@ export interface OrderDraft {
   routeNodeIds: string[];
   routeId?: string;
   routeName?: string;
+  loop?: boolean;
 }
 
 export type VdaOrder = Headerless<Order>;

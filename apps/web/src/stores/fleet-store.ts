@@ -15,6 +15,8 @@ export interface TrackedOrderStatus {
   timestamp: string;
   routeId?: string;
   routeName?: string;
+  loop?: boolean;
+  loopIteration?: number;
 }
 
 export interface FleetState {
@@ -79,6 +81,8 @@ export const useFleetStore = create<FleetState>((set) => ({
       const status = String(message.status || "");
       const routeName = typeof message.routeName === "string" ? message.routeName : undefined;
       const routeId = typeof message.routeId === "string" ? message.routeId : undefined;
+      const loop = message.loop === true;
+      const loopIteration = typeof message.loopIteration === "number" ? message.loopIteration : undefined;
       const timestamp = typeof message.timestamp === "string" ? message.timestamp : new Date().toISOString();
       const tracked: TrackedOrderStatus = {
         serialNumber,
@@ -87,6 +91,8 @@ export const useFleetStore = create<FleetState>((set) => ({
         timestamp,
         ...(routeId ? { routeId } : {}),
         ...(routeName ? { routeName } : {}),
+        ...(loop ? { loop: true } : {}),
+        ...(loopIteration !== undefined ? { loopIteration } : {}),
       };
       set((state) => ({
         orderStatuses: {
@@ -94,9 +100,14 @@ export const useFleetStore = create<FleetState>((set) => ({
           [serialNumber]: tracked,
         },
         orderStatus: routeName
-          ? `${serialNumber} ${routeName}: ${status}`
-          : `${serialNumber} order ${orderId}: ${status}`,
+          ? `${serialNumber} ${routeName}: ${formatStatus(status, loop, loopIteration)}`
+          : `${serialNumber} order ${orderId}: ${formatStatus(status, loop, loopIteration)}`,
       }));
     }
   },
 }));
+
+function formatStatus(status: string, loop: boolean, loopIteration?: number) {
+  if (!loop) return status;
+  return loopIteration ? `${status} · loop ${loopIteration}` : status;
+}

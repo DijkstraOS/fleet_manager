@@ -15,4 +15,9 @@ export function registerOrderRoutes(fastify: FastifyInstance, orders: OrderHandl
       return reply.code(500).send({ error: "Could not send order." });
     }
   });
+
+  fastify.delete<{ Params: { serialNumber: string } }>("/api/orders/loops/:serialNumber", async (request) => {
+    const stopped = orders.stopLoop(request.params.serialNumber);
+    return { ok: true, stopped };
+  });
 }
