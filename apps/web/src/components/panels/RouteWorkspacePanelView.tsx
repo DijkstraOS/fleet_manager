@@ -1,4 +1,4 @@
-import { Circle, Route, Save, Trash2, Undo2 } from "lucide-react";
+import { Circle, Repeat, Route, Save, Trash2, Undo2 } from "lucide-react";
 import type { RouteDocument, ValidationIssue, VdaState } from "@agv/core";
 
 export interface RouteWorkspaceAgv {
@@ -15,8 +15,11 @@ export function RouteWorkspacePanelView(props: {
   routeStatus: string;
   agvs: RouteWorkspaceAgv[];
   selectedAgvSerial: string | null;
+  loopRoute: boolean;
+  canLoopRoute: boolean;
   canSaveRoute: boolean;
   canSendRoute: boolean;
+  canStopLoop: boolean;
   onNewRoute: () => void;
   onSelectRoute: (routeId: string) => void;
   onDraftName: (name: string) => void;
@@ -25,7 +28,9 @@ export function RouteWorkspacePanelView(props: {
   onSaveRoute: () => void;
   onDeleteRoute: () => void;
   onSelectAgv: (serialNumber: string) => void;
+  onLoopRouteChange: (loopRoute: boolean) => void;
   onSendRoute: () => void;
+  onStopLoop: () => void;
 }) {
   return (
     <aside className="left-panel route-workbench">
@@ -95,8 +100,22 @@ export function RouteWorkspacePanelView(props: {
             </div>
           </button>
         ))}
+        <label className="checkbox-row route-loop-toggle">
+          <input
+            type="checkbox"
+            checked={props.loopRoute}
+            onChange={(event) => props.onLoopRouteChange(event.target.checked)}
+          />
+          <span>Loop route</span>
+        </label>
+        {props.loopRoute && props.draftRouteNodeIds.length >= 2 && !props.canLoopRoute && (
+          <p className="error-text">Looping route must end at its starting node.</p>
+        )}
         <button type="button" className="action-button primary full-width" onClick={props.onSendRoute} disabled={!props.canSendRoute}>
-          <Route /> Send Route
+          {props.loopRoute ? <Repeat /> : <Route />} {props.loopRoute ? "Start Loop" : "Send Route"}
+        </button>
+        <button type="button" className="secondary-button full-width" onClick={props.onStopLoop} disabled={!props.canStopLoop}>
+          <Repeat /> Stop Loop
         </button>
       </section>
     </aside>

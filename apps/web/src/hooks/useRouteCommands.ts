@@ -8,6 +8,7 @@ import {
   saveMap as saveMapDocument,
   saveRoute as saveRouteDocument,
   sendOrder,
+  stopLoop as stopOrderLoop,
 } from "../services/api";
 import { useEditorStore } from "../stores/editor-store";
 import { type RealtimeAgv, useFleetStore } from "../stores/fleet-store";
@@ -54,7 +55,7 @@ export function useRouteCommands(options: {
       await deleteRouteDocument(selectedRouteId);
       removeRouteLocal(selectedRouteId);
     },
-    sendRoute: async () => {
+    sendRoute: async (sendOptions?: { loop?: boolean }) => {
       const agv = options.agvs.find((item) => item.serialNumber === selectedAgvSerial) || options.agvs[0];
       if (!agv) {
         setRouteStatus("Start the simulator app or connect an AGV first.");
@@ -65,7 +66,7 @@ export function useRouteCommands(options: {
         return;
       }
       try {
-        setRouteStatus("Preparing route...");
+        setRouteStatus(sendOptions?.loop ? "Preparing loop..." : "Preparing route...");
         await saveMapDocument(map);
         const response = await sendOrder({
           mapId,
@@ -73,12 +74,32 @@ export function useRouteCommands(options: {
           routeNodeIds: draftRouteNodeIds,
           ...(selectedRouteId ? { routeId: selectedRouteId } : {}),
           ...(draftRouteName.trim() ? { routeName: draftRouteName.trim() } : {}),
+          ...(sendOptions?.loop ? { loop: true } : {}),
         });
-        setOrderStatus(response.ok ? `Order sent to ${agv.serialNumber}.` : "Order failed.");
-        setRouteStatus(response.ok ? `Sent ${draftRouteName} to ${agv.serialNumber}.` : "Order failed.");
+        const sentLabel = sendOptions?.loop ? "Loop started" : "Order sent";
+        setOrderStatus(response.ok ? `${sentLabel} for ${agv.serialNumber}.` : "Order failed.");
+        setRouteStatus(response.ok ? `${sentLabel}: ${draftRouteName} to ${agv.serialNumber}.` : "Order failed.");
       } catch (error) {
         setOrderStatus("Order failed.");
         setRouteStatus(error instanceof Error ? error.message : "Order failed.");
+      }
+    },
+    stopLoop: async () => {
+      const serialNumber = selectedAgvSerial || options.agvs[0]?.serialNumber;
+      if (!serialNumber) {
+        setRouteStatus("Start the simulator app or connect an AGV first.");
+        return;
+      }
+      try {
+        const response = await stopOrderLoop(serialNumber);
+        const message = response.stopped
+          ? `Stopped loop for ${serialNumber}.`
+          : `No active loop for ${serialNumber}.`;
+        setOrderStatus(message);
+        setRouteStatus(message);
+      } catch (error) {
+        setOrderStatus("Could not stop loop.");
+        setRouteStatus(error instanceof Error ? error.message : "Could not stop loop.");
       }
     },
   };

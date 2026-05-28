@@ -12,7 +12,7 @@ export interface AgvSnapshot {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
-      "content-type": "application/json",
+      ...(init?.body ? { "content-type": "application/json" } : {}),
       ...(init?.headers || {}),
     },
     ...init,
@@ -69,5 +69,11 @@ export function sendOrder(draft: OrderDraft) {
   return request<{ ok: boolean }>("/api/orders", {
     method: "POST",
     body: JSON.stringify(draft),
+  });
+}
+
+export function stopLoop(serialNumber: string) {
+  return request<{ ok: boolean; stopped: boolean }>(`/api/orders/loops/${encodeURIComponent(serialNumber)}`, {
+    method: "DELETE",
   });
 }

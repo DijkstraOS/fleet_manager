@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import {
+  createQuadraticBezierTrajectory,
   createDemoMap,
+  evaluateQuadraticBezier,
   findEdge,
   findNode,
   isSupportedQuadraticBezier,
@@ -65,10 +67,11 @@ export interface EditorState {
   setBackgroundImageOpacity: (opacity: number) => void;
   setBackgroundImageLocked: (locked: boolean) => void;
   removeBackgroundImage: () => void;
-  makeSelectedEdgeCurve: () => void;
-  resetSelectedEdgeCurve: () => void;
-  straightenSelectedEdge: () => void;
-  updateSelectedEdgeCurveHandle: (x: number, y: number) => void;
+  makeSelectedEdgeCurve: (options?: { includeReverse?: boolean }) => void;
+  resetSelectedEdgeCurve: (options?: { includeReverse?: boolean }) => void;
+  straightenSelectedEdge: (options?: { includeReverse?: boolean }) => void;
+  bifurcateSelectedEdge: (options?: { includeReverse?: boolean }) => void;
+  updateSelectedEdgeCurveHandle: (x: number, y: number, options?: { includeReverse?: boolean }) => void;
   addRouteNode: (nodeId: string) => void;
   beginDragNode: (nodeId: string) => void;
   dragNodeTo: (x: number, y: number) => void;
@@ -291,34 +294,104 @@ export const useEditorStore = create<EditorState>((set) => ({
     };
   }),
 
-  makeSelectedEdgeCurve: () => set((state) => {
+  makeSelectedEdgeCurve: (options) => set((state) => {
     if (state.selection?.type !== "edge") return {};
     const next = updateSelectedEdgeTrajectory(state, (edge, from, to) => {
       const synced = syncTrajectoryEndpoints(edge, from, to);
       if (isSupportedQuadraticBezier(synced.trajectory)) return synced;
       return resetEdgeToQuadraticBezier(edge, from, to);
+    }, {
+      ...options,
+      reverseUpdater: resetReverseEdgeToSelectedCurvePath,
     });
     return next ? { ...next, status: "Converted edge to curve." } : {};
   }),
 
-  resetSelectedEdgeCurve: () => set((state) => {
+  resetSelectedEdgeCurve: (options) => set((state) => {
     if (state.selection?.type !== "edge") return {};
-    const next = updateSelectedEdgeTrajectory(state, (edge, from, to) =>
-      resetEdgeToQuadraticBezier(edge, from, to)
+    const next = updateSelectedEdgeTrajectory(
+      state,
+      (edge, from, to) => resetEdgeToQuadraticBezier(edge, from, to),
+      {
+        ...options,
+        reverseUpdater: resetReverseEdgeToSelectedCurvePath,
+      }
     );
     return next ? { ...next, status: "Reset edge curve." } : {};
   }),
 
-  straightenSelectedEdge: () => set((state) => {
+  straightenSelectedEdge: (options) => set((state) => {
     if (state.selection?.type !== "edge") return {};
-    const next = updateSelectedEdgeTrajectory(state, (edge) => ({ ...edge, trajectory: null }));
+    const next = updateSelectedEdgeTrajectory(state, (edge) => ({ ...edge, trajectory: null }), options);
     return next ? { ...next, status: "Straightened edge." } : {};
   }),
 
-  updateSelectedEdgeCurveHandle: (x, y) => set((state) => {
+  bifurcateSelectedEdge: (options) => set((state) => {
     if (state.selection?.type !== "edge") return {};
-    return updateSelectedEdgeTrajectory(state, (edge, from, to) =>
-      setQuadraticBezierHandle(edge, from, to, { x, y })
+    const edge = state.map.edges.find((item) => item.id === state.selection?.id);
+    if (!edge) return {};
+    const from = findNode(state.map, edge.from);
+    const to = findNode(state.map, edge.to);
+    if (!from || !to) return {};
+    const includeReverse = options?.includeReverse === true;
+    const reverse = includeReverse ? findEdge(state.map, edge.to, edge.from) : undefined;
+    const baseEdges = state.map.edges.filter((item) =>
+      item.id !== edge.id && item.id !== reverse?.id
+    );
+    const split = splitEdge(edge, from, to, state.map, { availableEdges: baseEdges });
+    if (!split) {
+      return {
+        status: "Reset unsupported imported trajectory before bifurcating this edge.",
+      };
+    }
+    const replacementEdges = [...split.edges];
+    if (reverse) {
+      const reverseFrom = findNode(state.map, reverse.from);
+      const reverseTo = findNode(state.map, reverse.to);
+      if (!reverseFrom || !reverseTo) return {};
+      const reverseSplit = splitEdge(reverse, reverseFrom, reverseTo, state.map, {
+        node: split.node,
+        availableEdges: [...baseEdges, ...replacementEdges],
+      });
+      if (!reverseSplit) {
+        return {
+          status: "Reset unsupported reverse edge trajectory before bifurcating both directions.",
+        };
+      }
+      replacementEdges.push(...reverseSplit.edges);
+    }
+    let insertedReplacement = false;
+    const edges = state.map.edges.flatMap((item) => {
+      if (item.id === edge.id) {
+        insertedReplacement = true;
+        return replacementEdges;
+      }
+      if (reverse && item.id === reverse.id) return [];
+      return [item];
+    });
+    if (!insertedReplacement) edges.push(...replacementEdges);
+    return {
+      selection: { type: "node", id: split.node.id },
+      map: {
+        ...state.map,
+        nodes: [...state.map.nodes, split.node],
+        edges,
+        updatedAt: new Date().toISOString(),
+      },
+      status: `Bifurcated edge ${edge.id}.`,
+    };
+  }),
+
+  updateSelectedEdgeCurveHandle: (x, y, options) => set((state) => {
+    if (state.selection?.type !== "edge") return {};
+    return updateSelectedEdgeTrajectory(
+      state,
+      (edge, from, to) => setQuadraticBezierHandle(edge, from, to, { x, y }),
+      {
+        ...options,
+        includeReverseWhen: edgesShareQuadraticHandle,
+        reverseUpdater: resetReverseEdgeToSelectedCurvePath,
+      }
     ) || {};
   }),
 
@@ -430,22 +503,188 @@ function positiveOr(value: number, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function splitEdge(
+  edge: MapEdge,
+  from: MapNode,
+  to: MapNode,
+  map: MapDocument,
+  options: {
+    node?: MapNode;
+    availableEdges?: MapEdge[];
+  } = {}
+): { node: MapNode; edges: [MapEdge, MapEdge] } | null {
+  const syncedEdge = syncTrajectoryEndpoints(edge, from, to);
+
+  if (syncedEdge.trajectory && !isSupportedQuadraticBezier(syncedEdge.trajectory)) {
+    return null;
+  }
+
+  const newNodeId = options.node?.id || nextNodeId(map);
+  const splitPoint = syncedEdge.trajectory
+    ? evaluateQuadraticBezier(syncedEdge.trajectory, 0.5)
+    : {
+        x: (from.x + to.x) / 2,
+        y: (from.y + to.y) / 2,
+      };
+  const node: MapNode = options.node || {
+    id: newNodeId,
+    label: newNodeId,
+    x: splitPoint.x,
+    y: splitPoint.y,
+  };
+  const availableEdges = options.availableEdges ?? map.edges.filter((item) => item.id !== edge.id);
+  const firstEdgeId = nextEdgeId(
+    { ...map, nodes: [...map.nodes, node], edges: availableEdges },
+    edge.from,
+    newNodeId
+  );
+  const secondEdgeId = nextEdgeId(
+    {
+      ...map,
+      nodes: [...map.nodes, node],
+      edges: [
+        ...availableEdges,
+        { ...edge, id: firstEdgeId, from: edge.from, to: newNodeId },
+      ],
+    },
+    newNodeId,
+    edge.to
+  );
+
+  const baseEdge = copyBifurcatedEdgeProperties(edge);
+  return {
+    node,
+    edges: [
+      {
+        ...baseEdge,
+        id: firstEdgeId,
+        label: `${edge.from} -> ${newNodeId}`,
+        from: edge.from,
+        to: newNodeId,
+        trajectory: syncedEdge.trajectory
+          ? splitQuadraticTrajectory(syncedEdge.trajectory, "first", node)
+          : null,
+      },
+      {
+        ...baseEdge,
+        id: secondEdgeId,
+        label: `${newNodeId} -> ${edge.to}`,
+        from: newNodeId,
+        to: edge.to,
+        trajectory: syncedEdge.trajectory
+          ? splitQuadraticTrajectory(syncedEdge.trajectory, "second", node)
+          : null,
+      },
+    ],
+  };
+}
+
+function copyBifurcatedEdgeProperties(edge: MapEdge): Omit<MapEdge, "id" | "label" | "from" | "to" | "trajectory"> {
+  return {
+    ...(edge.maxSpeed !== undefined ? { maxSpeed: edge.maxSpeed } : {}),
+    ...(edge.orientation !== undefined ? { orientation: edge.orientation } : {}),
+    orientationType: edge.orientationType,
+    rotationAllowed: edge.rotationAllowed,
+  };
+}
+
+function splitQuadraticTrajectory(
+  trajectory: NonNullable<MapEdge["trajectory"]>,
+  segment: "first" | "second",
+  splitPointNode: MapNode
+) {
+  const [start, handle, end] = trajectory.controlPoints;
+  if (!start || !handle || !end) return null;
+  const startHandle = midpoint(start, handle);
+  const endHandle = midpoint(handle, end);
+  return segment === "first"
+    ? createQuadraticBezierTrajectory(start, splitPointNode, startHandle)
+    : createQuadraticBezierTrajectory(splitPointNode, end, endHandle);
+}
+
+function midpoint(
+  left: { x: number; y: number },
+  right: { x: number; y: number }
+) {
+  return {
+    x: (left.x + right.x) / 2,
+    y: (left.y + right.y) / 2,
+  };
+}
+
 function updateSelectedEdgeTrajectory(
   state: EditorState,
-  updater: (edge: MapEdge, from: MapNode, to: MapNode) => MapEdge
+  updater: (edge: MapEdge, from: MapNode, to: MapNode) => MapEdge,
+  options: {
+    includeReverse?: boolean;
+    includeReverseWhen?: (edge: MapEdge, reverseEdge: MapEdge) => boolean;
+    reverseUpdater?: (edge: MapEdge, from: MapNode, to: MapNode, selectedEdge: MapEdge) => MapEdge;
+  } = {}
 ): Pick<EditorState, "map"> | null {
   if (state.selection?.type !== "edge") return null;
   const edge = state.map.edges.find((item) => item.id === state.selection?.id);
   if (!edge) return null;
+  const reverseEdge = findEdge(state.map, edge.to, edge.from);
+  const reverse = reverseEdge && (options.includeReverse || options.includeReverseWhen?.(edge, reverseEdge))
+    ? reverseEdge
+    : undefined;
   const from = findNode(state.map, edge.from);
   const to = findNode(state.map, edge.to);
   if (!from || !to) return null;
-  const next = updater(edge, from, to);
+  const selectedNext = updater(edge, from, to);
+  const updatedById = new Map<string, MapEdge>();
+
+  updatedById.set(edge.id, selectedNext);
+  if (reverse && reverse.id !== edge.id) {
+    const reverseFrom = findNode(state.map, reverse.from);
+    const reverseTo = findNode(state.map, reverse.to);
+    if (!reverseFrom || !reverseTo) return null;
+    updatedById.set(
+      reverse.id,
+      options.reverseUpdater
+        ? options.reverseUpdater(reverse, reverseFrom, reverseTo, selectedNext)
+        : updater(reverse, reverseFrom, reverseTo)
+    );
+  }
+
   return {
     map: {
       ...state.map,
-      edges: state.map.edges.map((item) => item.id === edge.id ? next : item),
+      edges: state.map.edges.map((item) => updatedById.get(item.id) ?? item),
       updatedAt: new Date().toISOString(),
     },
   };
+}
+
+function resetReverseEdgeToSelectedCurvePath(
+  reverseEdge: MapEdge,
+  from: MapNode,
+  to: MapNode,
+  selectedEdge: MapEdge
+): MapEdge {
+  if (!isSupportedQuadraticBezier(selectedEdge.trajectory)) {
+    return resetEdgeToQuadraticBezier(reverseEdge, from, to);
+  }
+  const handle = selectedEdge.trajectory.controlPoints[1];
+  if (!handle) return resetEdgeToQuadraticBezier(reverseEdge, from, to);
+  return {
+    ...reverseEdge,
+    trajectory: createQuadraticBezierTrajectory(from, to, handle),
+  };
+}
+
+function edgesShareQuadraticHandle(edge: MapEdge, reverseEdge: MapEdge): boolean {
+  if (!isSupportedQuadraticBezier(edge.trajectory) || !isSupportedQuadraticBezier(reverseEdge.trajectory)) {
+    return false;
+  }
+  const handle = edge.trajectory.controlPoints[1];
+  const reverseHandle = reverseEdge.trajectory.controlPoints[1];
+  return Boolean(handle && reverseHandle && pointsMatch(handle, reverseHandle));
+}
+
+function pointsMatch(
+  left: { x: number; y: number },
+  right: { x: number; y: number }
+): boolean {
+  return Math.abs(left.x - right.x) < 0.000001 && Math.abs(left.y - right.y) < 0.000001;
 }

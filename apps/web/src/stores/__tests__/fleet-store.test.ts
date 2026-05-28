@@ -58,6 +58,24 @@ describe("fleet store", () => {
     expect(state.orderStatuses["SIM-001"]?.routeName).toBe("Dock Run");
     expect(state.orderStatus).toBe("SIM-001 Dock Run: completed");
   });
+
+  it("tracks loop metadata from order status messages", () => {
+    useFleetStore.getState().handleRealtimeMessage({
+      type: "order_status",
+      serialNumber: "SIM-001",
+      orderId: "order-loop-1",
+      status: "sent",
+      routeName: "Dock Loop",
+      timestamp: new Date(0).toISOString(),
+      loop: true,
+      loopIteration: 3,
+    });
+
+    const state = useFleetStore.getState();
+    expect(state.orderStatuses["SIM-001"]?.loop).toBe(true);
+    expect(state.orderStatuses["SIM-001"]?.loopIteration).toBe(3);
+    expect(state.orderStatus).toBe("SIM-001 Dock Loop: sent · loop 3");
+  });
 });
 
 function stateFor(lastNodeId: string) {

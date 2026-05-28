@@ -16,7 +16,7 @@ import {
   registerOrderRoutes,
   registerRouteRoutes,
 } from "./routes/index";
-import type { MapRepository, RealtimePublisher, RouteRepository } from "./domain/ports";
+import type { MapRepository, OrderHandlers, RealtimePublisher, RouteRepository } from "./domain/ports";
 
 export interface AgvServerOptions {
   port?: number;
@@ -59,6 +59,7 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
 
   const realtime = createRealtimePublisher(fastify.server);
   const orderTracker = createOrderTracker();
+  let orderHandlers: OrderHandlers | null = null;
   const mqttHub = createMqttFleetGateway({
     brokerUrl: mqttBroker,
     interfaceName,
@@ -80,15 +81,18 @@ export async function createAgvServer(options: AgvServerOptions = {}): Promise<A
       });
     },
     onOrderStatus: (data) => {
-      realtime.broadcast({ type: "order_status", ...orderTracker.enrich(data) });
+      const enriched = orderTracker.enrich(data);
+      realtime.broadcast({ type: "order_status", ...enriched });
+      orderHandlers?.handleOrderStatus(enriched);
     },
   });
+  orderHandlers = createOrderHandlers(store, mqttHub, realtime, orderTracker);
 
   registerHealthRoutes(fastify, { mqttBrokerUrl: mqttHub.brokerUrl, interfaceName });
   registerMapRoutes(fastify, createMapHandlers(store, realtime));
   registerRouteRoutes(fastify, createRouteHandlers(routeStore, store, realtime));
   registerFleetRoutes(fastify, createFleetHandlers(mqttHub));
-  registerOrderRoutes(fastify, createOrderHandlers(store, mqttHub, realtime, orderTracker));
+  registerOrderRoutes(fastify, orderHandlers);
 
   return {
     fastify,
