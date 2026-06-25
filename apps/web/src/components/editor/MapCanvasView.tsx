@@ -1,4 +1,4 @@
-import type { PointerEvent, RefObject, WheelEvent } from "react";
+import type { PointerEvent, RefObject } from "react";
 import {
   getQuadraticBezierHandle,
   isSupportedQuadraticBezier,
@@ -38,7 +38,6 @@ export interface MapCanvasViewProps {
   onCanvasPointerDown: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerUp: (event: PointerEvent<SVGSVGElement>) => void;
-  onCanvasWheel: (event: WheelEvent<SVGSVGElement>) => void;
   onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => void;
   onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => void;
   onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => void;
@@ -60,7 +59,6 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         onPointerMove={props.onCanvasPointerMove}
         onPointerUp={props.onCanvasPointerUp}
         onPointerLeave={props.onCanvasPointerUp}
-        onWheel={props.onCanvasWheel}
       >
         <CanvasDefs />
         <BaseLayer bounds={props.bounds} />

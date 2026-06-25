@@ -1,6 +1,6 @@
-import { useMemo, useRef, type PointerEvent, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, type PointerEvent } from "react";
 import type { MapNode } from "@agv/core";
-import { getBounds, panViewport, screenToWorld, screenToWorldRaw, zoomViewport, type CanvasBounds } from "../../lib/geometry";
+import { getBounds, panViewport, screenToWorld, screenToWorldRaw, wheelZoomScale, zoomViewport, type CanvasBounds } from "../../lib/geometry";
 import { useEditorStore, type EditorBackgroundImage } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
 import { useRouteStore } from "../../stores/route-store";
@@ -69,6 +69,27 @@ export function useMapCanvasController() {
   function zoomAroundCenter(scale: number) {
     zoomAt({ x: viewport.x + viewport.width / 2, y: viewport.y + viewport.height / 2 }, scale);
   }
+
+  // Wheel zoom is attached as a native, non-passive listener. React routes its
+  // onWheel prop through a passive listener, so event.preventDefault() there is
+  // a no-op and the browser's own scroll / pinch-zoom runs on top of ours. The
+  // ref keeps the DOM listener stable while always seeing the latest viewport.
+  const wheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
+  useEffect(() => {
+    wheelHandlerRef.current = (event) => {
+      if (!svgRef.current) return;
+      event.preventDefault();
+      const anchor = screenToWorldRaw(svgRef.current, event.clientX, event.clientY);
+      setViewport(zoomViewport(viewport, anchor, wheelZoomScale(event)));
+    };
+  });
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const listener = (event: WheelEvent) => wheelHandlerRef.current(event);
+    svg.addEventListener("wheel", listener, { passive: false });
+    return () => svg.removeEventListener("wheel", listener);
+  }, []);
 
   return {
     svgRef,
@@ -197,12 +218,6 @@ export function useMapCanvasController() {
       selectEdge(edgeId);
       curveDragRef.current = { edgeId };
       svgRef.current.setPointerCapture(event.pointerId);
-    },
-    onCanvasWheel: (event: WheelEvent<SVGSVGElement>) => {
-      if (!svgRef.current) return;
-      event.preventDefault();
-      const anchor = screenToWorld(svgRef.current, event.clientX, event.clientY);
-      zoomAt(anchor, event.deltaY < 0 ? 0.85 : 1.18);
     },
     onZoomIn: () => zoomAroundCenter(0.85),
     onZoomOut: () => zoomAroundCenter(1.18),

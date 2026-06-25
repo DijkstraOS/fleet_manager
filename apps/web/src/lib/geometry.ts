@@ -4,6 +4,15 @@ export const GRID = 1;
 export const MIN_VIEWPORT_WIDTH = 3;
 export const MAX_VIEWPORT_WIDTH = 80;
 
+// Wheel-zoom tuning. Wheel events report their delta in pixels, lines, or pages
+// (deltaMode); we normalize everything to pixels so a mouse notch and a trackpad
+// swipe stay comparable, then clamp per event so one large notch cannot jump
+// straight to the zoom limit.
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const WHEEL_LINE_HEIGHT_PX = 16;
+const WHEEL_PAGE_HEIGHT_PX = 400;
+const WHEEL_MAX_STEP_PX = 120;
+
 export interface CanvasBounds {
   x: number;
   y: number;
@@ -121,6 +130,16 @@ export function zoomViewport(viewport: CanvasBounds, anchor: { x: number; y: num
     width: nextWidth,
     height: nextHeight,
   };
+}
+
+export function wheelZoomScale(event: { deltaY: number; deltaMode: number }): number {
+  const unit =
+    event.deltaMode === 1 ? WHEEL_LINE_HEIGHT_PX : event.deltaMode === 2 ? WHEEL_PAGE_HEIGHT_PX : 1;
+  const deltaPixels = event.deltaY * unit;
+  const clamped = Math.max(-WHEEL_MAX_STEP_PX, Math.min(WHEEL_MAX_STEP_PX, deltaPixels));
+  // exp() keeps the gesture reversible: scrolling in and back out by the same
+  // distance returns to the original scale. deltaY < 0 (scroll up) -> < 1 (zoom in).
+  return Math.exp(clamped * WHEEL_ZOOM_SENSITIVITY);
 }
 
 export function panViewport(viewport: CanvasBounds, deltaX: number, deltaY: number): CanvasBounds {
