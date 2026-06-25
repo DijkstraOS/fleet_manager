@@ -45,35 +45,11 @@ export const useFleetStore = create<FleetState>((set) => ({
 
   handleRealtimeMessage: (message) => {
     if (message.type === "agv_state") {
-      const serialNumber = String(message.serialNumber);
-      set((state) => ({
-        agvs: {
-          ...state.agvs,
-          [serialNumber]: {
-            serialNumber,
-            manufacturer: String(message.manufacturer || ""),
-            state: message.state as VdaState,
-            visualization: state.agvs[serialNumber]?.visualization || null,
-          },
-        },
-        selectedAgvSerial: state.selectedAgvSerial || serialNumber,
-      }));
+      upsertAgv(set, message, { state: message.state as VdaState });
     }
 
     if (message.type === "agv_visualization") {
-      const serialNumber = String(message.serialNumber);
-      set((state) => ({
-        agvs: {
-          ...state.agvs,
-          [serialNumber]: {
-            serialNumber,
-            manufacturer: String(message.manufacturer || ""),
-            state: state.agvs[serialNumber]?.state || null,
-            visualization: message.visualization as VdaVisualization,
-          },
-        },
-        selectedAgvSerial: state.selectedAgvSerial || serialNumber,
-      }));
+      upsertAgv(set, message, { visualization: message.visualization as VdaVisualization });
     }
 
     if (message.type === "order_status") {
@@ -109,6 +85,31 @@ export const useFleetStore = create<FleetState>((set) => ({
     }
   },
 }));
+
+type SetFleetState = (
+  updater: (state: FleetState) => Partial<FleetState>
+) => void;
+
+function upsertAgv(
+  set: SetFleetState,
+  message: Record<string, unknown>,
+  patch: Pick<RealtimeAgv, "state"> | Pick<RealtimeAgv, "visualization">
+) {
+  const serialNumber = String(message.serialNumber);
+  set((state) => ({
+    agvs: {
+      ...state.agvs,
+      [serialNumber]: {
+        serialNumber,
+        manufacturer: String(message.manufacturer || ""),
+        state: state.agvs[serialNumber]?.state || null,
+        visualization: state.agvs[serialNumber]?.visualization || null,
+        ...patch,
+      },
+    },
+    selectedAgvSerial: state.selectedAgvSerial || serialNumber,
+  }));
+}
 
 function formatStatus(status: string, loop: boolean, loopIteration?: number) {
   if (!loop) return status;

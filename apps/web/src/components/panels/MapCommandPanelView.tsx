@@ -13,15 +13,12 @@ import {
   Unlock,
   Upload,
 } from "lucide-react";
-import type { EditorBackgroundImage } from "../../stores/editor-store";
-import type { Tool } from "../../types";
+import type { EditorBackgroundImage, Selection, Tool } from "../../types";
 import { ToolButton } from "../toolbar/ToolButton";
-
-type MapCommandSelection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
 
 export function MapCommandPanelView(props: {
   tool: Tool;
-  selection: MapCommandSelection;
+  selection: Selection;
   backgroundImage: EditorBackgroundImage | null;
   canAddReverseEdge: boolean;
   inspector: ReactNode;

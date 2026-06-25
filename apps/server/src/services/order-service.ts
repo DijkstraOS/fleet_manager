@@ -46,6 +46,24 @@ export function createOrderHandlers(
   let nextLoopId = 1;
   let nextLoopOrderSequence = 1;
 
+  function broadcastOrderStatus(
+    status: string,
+    orderId: string,
+    serialNumber: string,
+    metadata: OrderMetadata,
+    extra?: Record<string, unknown>
+  ): void {
+    realtime.broadcast({
+      type: "order_status",
+      status,
+      orderId,
+      serialNumber,
+      timestamp: new Date().toISOString(),
+      ...metadata,
+      ...extra,
+    });
+  }
+
   async function publishDraft(
     draft: OrderDraft,
     options: {
@@ -73,7 +91,7 @@ export function createOrderHandlers(
       timestamp: new Date().toISOString(),
       ...metadata,
     };
-    realtime.broadcast({ type: "order_status", ...payload });
+    broadcastOrderStatus("sent", order.orderId, agv.serialNumber, metadata);
     return { ...payload, order: publishedOrder || order };
   }
 
@@ -100,15 +118,13 @@ export function createOrderHandlers(
       const current = activeLoops.get(serialNumber);
       if (!current || current.id !== loopId) return;
       activeLoops.delete(serialNumber);
-      realtime.broadcast({
-        type: "order_status",
-        status: "failed",
-        orderId: current.currentOrderId,
+      broadcastOrderStatus(
+        "failed",
+        current.currentOrderId,
         serialNumber,
-        timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "Loop failed.",
-        ...metadataForDraft(current.draft, { loop: true, loopIteration: nextIteration }),
-      });
+        metadataForDraft(current.draft, { loop: true, loopIteration: nextIteration }),
+        { error: error instanceof Error ? error.message : "Loop failed." }
+      );
     }
   }
 
@@ -147,14 +163,12 @@ export function createOrderHandlers(
       const active = activeLoops.get(serialNumber);
       if (!active) return false;
       activeLoops.delete(serialNumber);
-      realtime.broadcast({
-        type: "order_status",
-        status: "loop stopped",
-        orderId: active.currentOrderId,
+      broadcastOrderStatus(
+        "loop stopped",
+        active.currentOrderId,
         serialNumber,
-        timestamp: new Date().toISOString(),
-        ...metadataForDraft(active.draft, { loop: true, loopIteration: active.iteration }),
-      });
+        metadataForDraft(active.draft, { loop: true, loopIteration: active.iteration })
+      );
       return true;
     },
 

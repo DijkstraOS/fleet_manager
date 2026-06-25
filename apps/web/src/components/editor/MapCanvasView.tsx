@@ -10,13 +10,8 @@ import {
   type VdaVisualization,
 } from "@agv/core";
 import { LocateFixed, Minus, Plus } from "lucide-react";
-import { GRID, type CanvasBounds } from "../../lib/geometry";
-import type { EditorBackgroundImage } from "../../stores/editor-store";
-import type { Tool, WorkspaceMode } from "../../types";
-
-const STRAIGHT_EDGE_PARALLEL_OFFSET = 0.16;
-
-export type CanvasSelection = { type: "node"; id: string } | { type: "edge"; id: string } | null;
+import { GRID, getStraightLineGeometry, routeContainsEdge, type CanvasBounds } from "../../lib/geometry";
+import type { EditorBackgroundImage, Selection, Tool, WorkspaceMode } from "../../types";
 
 export interface CanvasAgv {
   serialNumber: string;
@@ -31,7 +26,7 @@ export interface MapCanvasViewProps {
   workspaceMode: WorkspaceMode;
   tool: Tool;
   backgroundImage: EditorBackgroundImage | null;
-  selection: CanvasSelection;
+  selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   agvs: CanvasAgv[];
@@ -186,7 +181,7 @@ function BackgroundImageLayer(props: {
 function EdgeLayer(props: {
   edges: MapEdge[];
   nodes: MapNode[];
-  selection: CanvasSelection;
+  selection: Selection;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
@@ -223,69 +218,9 @@ function EdgeLayer(props: {
   );
 }
 
-function getStraightLineGeometry(edge: MapEdge, from: MapNode, to: MapNode, edges: MapEdge[], nodes: MapNode[]) {
-  const shouldOffset = edges.some((item) => {
-    if (item.id === edge.id || quadraticBezierSvgPath(item.trajectory)) return false;
-    const otherFrom = nodes.find((node) => node.id === item.from);
-    const otherTo = nodes.find((node) => node.id === item.to);
-    return otherFrom && otherTo && straightSegmentsOverlap(from, to, otherFrom, otherTo);
-  });
-  if (!shouldOffset) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
-
-  const canonical = canonicalStraightDirection(from, to);
-  const dx = canonical.to.x - canonical.from.x;
-  const dy = canonical.to.y - canonical.from.y;
-  const length = Math.hypot(dx, dy);
-  if (length <= 0) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
-
-  const side = samePoint(from, canonical.from) && samePoint(to, canonical.to) ? 1 : -1;
-  const offsetX = (-dy / length) * STRAIGHT_EDGE_PARALLEL_OFFSET * side;
-  const offsetY = (dx / length) * STRAIGHT_EDGE_PARALLEL_OFFSET * side;
-  return {
-    x1: from.x + offsetX,
-    y1: from.y + offsetY,
-    x2: to.x + offsetX,
-    y2: to.y + offsetY,
-  };
-}
-
-function straightSegmentsOverlap(aFrom: MapNode, aTo: MapNode, bFrom: MapNode, bTo: MapNode) {
-  const ax = aTo.x - aFrom.x;
-  const ay = aTo.y - aFrom.y;
-  const lengthSquared = ax * ax + ay * ay;
-  if (lengthSquared <= 0) return false;
-  if (Math.abs(cross(ax, ay, bFrom.x - aFrom.x, bFrom.y - aFrom.y)) > 0.001) return false;
-  if (Math.abs(cross(ax, ay, bTo.x - aFrom.x, bTo.y - aFrom.y)) > 0.001) return false;
-
-  const bStart = dot(bFrom.x - aFrom.x, bFrom.y - aFrom.y, ax, ay) / lengthSquared;
-  const bEnd = dot(bTo.x - aFrom.x, bTo.y - aFrom.y, ax, ay) / lengthSquared;
-  const start = Math.max(0, Math.min(bStart, bEnd));
-  const end = Math.min(1, Math.max(bStart, bEnd));
-  return end - start > 0.001;
-}
-
-function canonicalStraightDirection(from: MapNode, to: MapNode) {
-  if (from.x < to.x) return { from, to };
-  if (from.x > to.x) return { from: to, to: from };
-  if (from.y <= to.y) return { from, to };
-  return { from: to, to: from };
-}
-
-function samePoint(left: MapNode, right: MapNode) {
-  return left.id === right.id;
-}
-
-function cross(ax: number, ay: number, bx: number, by: number) {
-  return ax * by - ay * bx;
-}
-
-function dot(ax: number, ay: number, bx: number, by: number) {
-  return ax * bx + ay * by;
-}
-
 function CurveHandleLayer(props: {
   edges: MapEdge[];
-  selection: CanvasSelection;
+  selection: Selection;
   workspaceMode: WorkspaceMode;
   onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => void;
 }) {
@@ -327,7 +262,7 @@ function AgvOverlayLayer(props: { agvs: CanvasAgv[] }) {
 
 function NodeLayer(props: {
   nodes: MapNode[];
-  selection: CanvasSelection;
+  selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
@@ -345,10 +280,6 @@ function NodeLayer(props: {
   );
 }
 
-function routeContainsEdge(route: string[], from: string, to: string) {
-  return route.some((nodeId, index) => nodeId === from && route[index + 1] === to);
-}
-
 function edgeClass(active: boolean, routeActive: boolean, workspaceMode: WorkspaceMode) {
   const classes = ["edge"];
   if (workspaceMode !== "map") classes.push("subtle");
@@ -357,7 +288,7 @@ function edgeClass(active: boolean, routeActive: boolean, workspaceMode: Workspa
   return classes.join(" ");
 }
 
-function nodeClass(id: string, selection: CanvasSelection, edgeStart: string | null, route: string[], workspaceMode: WorkspaceMode) {
+function nodeClass(id: string, selection: Selection, edgeStart: string | null, route: string[], workspaceMode: WorkspaceMode) {
   const classes = ["node"];
   if (workspaceMode !== "map") classes.push("subtle");
   if (selection?.type === "node" && selection.id === id) classes.push("active");

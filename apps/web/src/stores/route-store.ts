@@ -1,6 +1,26 @@
 import { findEdge, type MapDocument, type RouteDocument } from "@agv/core";
 import { create } from "zustand";
 
+function draftFromRoute(
+  route: RouteDocument | null | undefined,
+  loadedStatus: string,
+): { selectedRouteId: string | null; draftName: string; draftNodeIds: string[]; status: string } {
+  if (!route) {
+    return {
+      selectedRouteId: null,
+      draftName: "New Route",
+      draftNodeIds: [],
+      status: "No saved routes for this map.",
+    };
+  }
+  return {
+    selectedRouteId: route.id,
+    draftName: route.name,
+    draftNodeIds: route.nodeIds,
+    status: loadedStatus,
+  };
+}
+
 export interface RouteEditorState {
   routes: RouteDocument[];
   selectedRouteId: string | null;
@@ -33,19 +53,7 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
       : routes[0];
     return {
       routes,
-      ...(selected
-        ? {
-            selectedRouteId: selected.id,
-            draftName: selected.name,
-            draftNodeIds: selected.nodeIds,
-            status: `Loaded ${selected.name}.`,
-          }
-        : {
-            selectedRouteId: null,
-            draftName: "New Route",
-            draftNodeIds: [],
-            status: "No saved routes for this map.",
-          }),
+      ...draftFromRoute(selected, `Loaded ${selected?.name}.`),
     };
   }),
 
@@ -59,12 +67,7 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
   selectRoute: (routeId) => {
     const route = get().routes.find((item) => item.id === routeId);
     if (!route) return;
-    set({
-      selectedRouteId: route.id,
-      draftName: route.name,
-      draftNodeIds: route.nodeIds,
-      status: `Editing ${route.name}.`,
-    });
+    set(draftFromRoute(route, `Editing ${route.name}.`));
   },
 
   setDraftName: (draftName) => set({ draftName }),
@@ -98,10 +101,7 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
       ...state.routes.filter((item) => item.id !== route.id),
       route,
     ].sort((left, right) => left.name.localeCompare(right.name)),
-    selectedRouteId: route.id,
-    draftName: route.name,
-    draftNodeIds: route.nodeIds,
-    status: `Saved ${route.name}.`,
+    ...draftFromRoute(route, `Saved ${route.name}.`),
   })),
 
   removeRouteLocal: (routeId) => set((state) => {
@@ -109,10 +109,7 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
     const selected = routes[0];
     return {
       routes,
-      selectedRouteId: selected?.id || null,
-      draftName: selected?.name || "New Route",
-      draftNodeIds: selected?.nodeIds || [],
-      status: selected ? `Editing ${selected.name}.` : "No saved routes for this map.",
+      ...draftFromRoute(selected, `Editing ${selected?.name}.`),
     };
   }),
 

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, type PointerEvent } from "react";
 import type { MapNode } from "@agv/core";
 import { getBounds, panViewport, screenToWorld, screenToWorldRaw, wheelZoomScale, zoomViewport, type CanvasBounds } from "../../lib/geometry";
-import { useEditorStore, type EditorBackgroundImage } from "../../stores/editor-store";
+import { useEditorStore } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
 import { useRouteStore } from "../../stores/route-store";
+import type { EditorBackgroundImage } from "../../types";
 
 interface PanState {
   clientX: number;

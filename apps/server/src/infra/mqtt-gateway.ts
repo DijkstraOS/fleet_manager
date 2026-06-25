@@ -1,5 +1,5 @@
 import mqtt, { type MqttClient } from "mqtt";
-import { VDA_5050_VERSION, type ConnectionStatus, type VdaOrder, type VdaPublishedOrder, type VdaState, type VdaVisualization } from "@agv/core";
+import { VDA_5050_VERSION, delay, formatError, type ConnectionStatus, type VdaOrder, type VdaPublishedOrder, type VdaState, type VdaVisualization } from "@agv/core";
 import { ConnectionState as VdaConnectionState, MasterControlClient, Topic, type AgvId } from "vda-5050-lib";
 import type { FleetGateway, KnownAgv } from "../domain/ports";
 
@@ -175,14 +175,6 @@ function subscribeMqtt(client: MqttClient, topic: string): Promise<void> {
       else resolve();
     });
   });
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function closeMqtt(client: MqttClient): Promise<void> {

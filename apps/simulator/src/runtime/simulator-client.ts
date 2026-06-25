@@ -1,4 +1,4 @@
-import type { MapDocument } from "@agv/core";
+import { delay, formatError, type MapDocument } from "@agv/core";
 import type { SimulatedAgv } from "../simulation";
 import { createMapClient, type MapClient } from "../services/map-client";
 import { createSimulatorFleet } from "../services/simulator-fleet";
@@ -106,11 +106,3 @@ const nullPublisher = {
   publishConnection: () => {},
   publishOrderStatus: () => {},
 };
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}

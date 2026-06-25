@@ -1,4 +1,7 @@
-import type { EdgeTrajectory, MapEdge, MapNode } from "./types";
+import type { EdgeTrajectory, MapDocument, MapEdge, MapNode } from "./types";
+// `splitEdge` needs stable id generation; these live in their own module (not ./index) to
+// avoid an index <-> trajectory import cycle.
+import { nextEdgeId, nextNodeId } from "./ids";
 
 export interface TrajectoryPoint {
   x: number;
@@ -180,6 +183,171 @@ export function getQuadraticBezierPoseAtDistance(
   }
 
   return { ...samples[samples.length - 1]!, totalLength };
+}
+
+/**
+ * Splits a directed edge into two halves at its geometric midpoint, inserting a node there.
+ * For a supported quadratic the curve is subdivided (each half keeps the original shape);
+ * a straight edge yields two straight halves. Returns null if the edge carries a trajectory
+ * that is not a supported quadratic. Pure: derives new node/edge ids from `map` without
+ * mutating it.
+ */
+export function splitEdge(
+  edge: MapEdge,
+  from: MapNode,
+  to: MapNode,
+  map: MapDocument,
+  options: {
+    node?: MapNode;
+    availableEdges?: MapEdge[];
+  } = {}
+): { node: MapNode; edges: [MapEdge, MapEdge] } | null {
+  const syncedEdge = syncTrajectoryEndpoints(edge, from, to);
+
+  if (syncedEdge.trajectory && !isSupportedQuadraticBezier(syncedEdge.trajectory)) {
+    return null;
+  }
+
+  const newNodeId = options.node?.id || nextNodeId(map);
+  const splitPoint = syncedEdge.trajectory
+    ? evaluateQuadraticBezier(syncedEdge.trajectory, 0.5)
+    : {
+        x: (from.x + to.x) / 2,
+        y: (from.y + to.y) / 2,
+      };
+  const node: MapNode = options.node || {
+    id: newNodeId,
+    label: newNodeId,
+    x: splitPoint.x,
+    y: splitPoint.y,
+  };
+  const availableEdges = options.availableEdges ?? map.edges.filter((item) => item.id !== edge.id);
+  const firstEdgeId = nextEdgeId(
+    { ...map, nodes: [...map.nodes, node], edges: availableEdges },
+    edge.from,
+    newNodeId
+  );
+  const secondEdgeId = nextEdgeId(
+    {
+      ...map,
+      nodes: [...map.nodes, node],
+      edges: [
+        ...availableEdges,
+        { ...edge, id: firstEdgeId, from: edge.from, to: newNodeId },
+      ],
+    },
+    newNodeId,
+    edge.to
+  );
+
+  const baseEdge = copyBifurcatedEdgeProperties(edge);
+  return {
+    node,
+    edges: [
+      {
+        ...baseEdge,
+        id: firstEdgeId,
+        label: `${edge.from} -> ${newNodeId}`,
+        from: edge.from,
+        to: newNodeId,
+        trajectory: syncedEdge.trajectory
+          ? splitQuadraticTrajectory(syncedEdge.trajectory, "first", node)
+          : null,
+      },
+      {
+        ...baseEdge,
+        id: secondEdgeId,
+        label: `${newNodeId} -> ${edge.to}`,
+        from: newNodeId,
+        to: edge.to,
+        trajectory: syncedEdge.trajectory
+          ? splitQuadraticTrajectory(syncedEdge.trajectory, "second", node)
+          : null,
+      },
+    ],
+  };
+}
+
+/**
+ * Copies the edge attributes that should carry over when an edge is bifurcated, deliberately
+ * dropping identity/geometry (`id`, `label`, `from`, `to`, `trajectory`) so the caller assigns
+ * fresh values. Optional numeric fields are omitted entirely when undefined.
+ */
+export function copyBifurcatedEdgeProperties(
+  edge: MapEdge
+): Omit<MapEdge, "id" | "label" | "from" | "to" | "trajectory"> {
+  return {
+    ...(edge.maxSpeed !== undefined ? { maxSpeed: edge.maxSpeed } : {}),
+    ...(edge.orientation !== undefined ? { orientation: edge.orientation } : {}),
+    orientationType: edge.orientationType,
+    rotationAllowed: edge.rotationAllowed,
+  };
+}
+
+/**
+ * Subdivides a quadratic Bézier at its midpoint (de Casteljau t=0.5), returning the requested
+ * half as a new trajectory anchored at `splitPointNode`. Returns null if the trajectory lacks
+ * the three control points of a quadratic.
+ */
+export function splitQuadraticTrajectory(
+  trajectory: NonNullable<MapEdge["trajectory"]>,
+  segment: "first" | "second",
+  splitPointNode: MapNode
+): EdgeTrajectory | null {
+  const [start, handle, end] = trajectory.controlPoints;
+  if (!start || !handle || !end) return null;
+  const startHandle = midpoint(start, handle);
+  const endHandle = midpoint(handle, end);
+  return segment === "first"
+    ? createQuadraticBezierTrajectory(start, splitPointNode, startHandle)
+    : createQuadraticBezierTrajectory(splitPointNode, end, endHandle);
+}
+
+/**
+ * Resets a reverse edge to mirror the selected edge's curve: when the selection is a supported
+ * quadratic, the reverse edge reuses its handle (so both directions share one control handle);
+ * otherwise it falls back to a default-handle quadratic between `from` and `to`.
+ */
+export function resetReverseEdgeToSelectedCurvePath(
+  reverseEdge: MapEdge,
+  from: MapNode,
+  to: MapNode,
+  selectedEdge: MapEdge
+): MapEdge {
+  if (!isSupportedQuadraticBezier(selectedEdge.trajectory)) {
+    return resetEdgeToQuadraticBezier(reverseEdge, from, to);
+  }
+  const handle = selectedEdge.trajectory.controlPoints[1];
+  if (!handle) return resetEdgeToQuadraticBezier(reverseEdge, from, to);
+  return {
+    ...reverseEdge,
+    trajectory: createQuadraticBezierTrajectory(from, to, handle),
+  };
+}
+
+/** True when both edges are supported quadratics whose control handles coincide. */
+export function edgesShareQuadraticHandle(edge: MapEdge, reverseEdge: MapEdge): boolean {
+  if (!isSupportedQuadraticBezier(edge.trajectory) || !isSupportedQuadraticBezier(reverseEdge.trajectory)) {
+    return false;
+  }
+  const handle = edge.trajectory.controlPoints[1];
+  const reverseHandle = reverseEdge.trajectory.controlPoints[1];
+  return Boolean(handle && reverseHandle && pointsMatch(handle, reverseHandle));
+}
+
+/** Coordinate equality within a 1e-6 tolerance (strict `<`). */
+export function pointsMatch(
+  left: TrajectoryPoint,
+  right: TrajectoryPoint
+): boolean {
+  return Math.abs(left.x - right.x) < 0.000001 && Math.abs(left.y - right.y) < 0.000001;
+}
+
+function midpoint(left: TrajectoryPoint, right: TrajectoryPoint): TrajectoryPoint {
+  return {
+    x: (left.x + right.x) / 2,
+    y: (left.y + right.y) / 2,
+  };
 }
 
 function defaultQuadraticHandle(from: TrajectoryPoint, to: TrajectoryPoint): TrajectoryPoint {

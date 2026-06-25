@@ -2,16 +2,24 @@ import { describe, expect, it } from "vitest";
 import { LIFParser } from "vdma-lif";
 import {
   buildVdaOrder,
+  copyBifurcatedEdgeProperties,
   createQuadraticBezierTrajectory,
   createDemoMap,
+  createEmptyMap,
+  edgesShareQuadraticHandle,
   getQuadraticBezierPoseAtDistance,
   exportLifDocument,
   importLifDocument,
   isSupportedQuadraticBezier,
   nextRouteId,
+  pointsMatch,
+  resetReverseEdgeToSelectedCurvePath,
+  splitEdge,
+  splitQuadraticTrajectory,
   validateMap,
   validateRoute,
   validateRouteDocument,
+  type MapEdge,
 } from "./index";
 
 describe("map validation", () => {
@@ -273,5 +281,225 @@ describe("VDA order generation", () => {
     expect(order.edges[0]?.trajectory?.degree).toBe(2);
     expect(order.edges[0]?.trajectory?.controlPoints[0]).toMatchObject({ x: 0, y: 0 });
     expect(order.edges[0]?.trajectory?.controlPoints[2]).toMatchObject({ x: 5, y: 0 });
+  });
+});
+
+describe("edge bifurcation / trajectory geometry", () => {
+  function makeEdge(overrides: Partial<MapEdge> = {}): MapEdge {
+    return {
+      id: "a-b",
+      label: "A -> B",
+      from: "a",
+      to: "b",
+      orientationType: "TANGENTIAL",
+      rotationAllowed: true,
+      trajectory: null,
+      ...overrides,
+    };
+  }
+
+  it("matches points within a 1e-6 tolerance", () => {
+    // |Δ| strictly below 1e-6 on both axes counts as a match.
+    expect(pointsMatch({ x: 0, y: 0 }, { x: 0.0000005, y: -0.0000005 })).toBe(true);
+    expect(pointsMatch({ x: 1, y: 1 }, { x: 1, y: 1 })).toBe(true);
+    // A 1e-3 gap is far outside tolerance.
+    expect(pointsMatch({ x: 0, y: 0 }, { x: 0.001, y: 0 })).toBe(false);
+    // Exactly 1e-6 is NOT below the threshold (strict <), so it must not match.
+    expect(pointsMatch({ x: 0, y: 0 }, { x: 0.000001, y: 0 })).toBe(false);
+  });
+
+  it("subdivides a quadratic at its midpoint via de Casteljau", () => {
+    // Curve start={0,0}, handle={4,4}, end={8,0}; its t=0.5 point is {4,2}.
+    const trajectory = createQuadraticBezierTrajectory(
+      { x: 0, y: 0 },
+      { x: 8, y: 0 },
+      { x: 4, y: 4 }
+    );
+    const splitPoint = { id: "m", label: "m", x: 4, y: 2 };
+
+    // first half handle = midpoint(start, handle) = {2,2}; endpoint = split point.
+    const first = splitQuadraticTrajectory(trajectory, "first", splitPoint);
+    expect(first?.controlPoints).toEqual([
+      { x: 0, y: 0 },
+      { x: 2, y: 2 },
+      { x: 4, y: 2 },
+    ]);
+
+    // second half handle = midpoint(handle, end) = {6,2}; start = split point.
+    const second = splitQuadraticTrajectory(trajectory, "second", splitPoint);
+    expect(second?.controlPoints).toEqual([
+      { x: 4, y: 2 },
+      { x: 6, y: 2 },
+      { x: 8, y: 0 },
+    ]);
+  });
+
+  it("returns null when subdividing a trajectory without three control points", () => {
+    const degenerate = {
+      degree: 2,
+      knotVector: [0, 0, 1, 1],
+      controlPoints: [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+    };
+    expect(splitQuadraticTrajectory(degenerate, "first", { id: "m", label: "m", x: 0, y: 0 })).toBeNull();
+  });
+
+  it("copies only the bifurcation-relevant edge properties", () => {
+    const copied = copyBifurcatedEdgeProperties(
+      makeEdge({ maxSpeed: 1.2, orientation: 0.5, orientationType: "GLOBAL", rotationAllowed: false })
+    );
+    // Identity/geometry fields are intentionally dropped so the caller assigns fresh ones.
+    expect(copied).toEqual({
+      maxSpeed: 1.2,
+      orientation: 0.5,
+      orientationType: "GLOBAL",
+      rotationAllowed: false,
+    });
+    expect("id" in copied).toBe(false);
+    expect("trajectory" in copied).toBe(false);
+  });
+
+  it("omits optional edge properties that are undefined", () => {
+    const copied = copyBifurcatedEdgeProperties(
+      makeEdge({ maxSpeed: undefined, orientation: undefined })
+    );
+    // maxSpeed/orientation keys must be absent (not present-but-undefined).
+    expect("maxSpeed" in copied).toBe(false);
+    expect("orientation" in copied).toBe(false);
+    expect(copied).toEqual({ orientationType: "TANGENTIAL", rotationAllowed: true });
+  });
+
+  it("detects when two edges share the same quadratic handle", () => {
+    const edge = makeEdge({
+      trajectory: createQuadraticBezierTrajectory({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 2.5, y: 1.25 }),
+    });
+    const sameHandle = makeEdge({
+      trajectory: createQuadraticBezierTrajectory({ x: 5, y: 0 }, { x: 0, y: 0 }, { x: 2.5, y: 1.25 }),
+    });
+    const otherHandle = makeEdge({
+      trajectory: createQuadraticBezierTrajectory({ x: 5, y: 0 }, { x: 0, y: 0 }, { x: 2.5, y: -3 }),
+    });
+    const straight = makeEdge({ trajectory: null });
+
+    expect(edgesShareQuadraticHandle(edge, sameHandle)).toBe(true);
+    expect(edgesShareQuadraticHandle(edge, otherHandle)).toBe(false);
+    // A straight edge has no quadratic handle to share.
+    expect(edgesShareQuadraticHandle(edge, straight)).toBe(false);
+  });
+
+  it("splits a straight edge at its geometric midpoint and copies properties", () => {
+    const map = {
+      ...createEmptyMap("Line"),
+      nodes: [
+        { id: "a", label: "A", x: 0, y: 0 },
+        { id: "b", label: "B", x: 4, y: 2 },
+      ],
+      edges: [makeEdge({ from: "a", to: "b", maxSpeed: 1.5, orientationType: "GLOBAL", rotationAllowed: false })],
+    };
+    const edge = map.edges[0]!;
+    const split = splitEdge(edge, map.nodes[0]!, map.nodes[1]!, map);
+
+    expect(split).not.toBeNull();
+    // Midpoint of {0,0}-{4,2}; first free n-id with two existing nodes is n-3.
+    expect(split!.node).toMatchObject({ id: "n-3", x: 2, y: 1 });
+    const [first, second] = split!.edges;
+    expect(`${first.from}->${first.to}`).toBe("a->n-3");
+    expect(`${second.from}->${second.to}`).toBe("n-3->b");
+    // Straight edge -> both halves stay straight (null trajectory).
+    expect(first.trajectory).toBeNull();
+    expect(second.trajectory).toBeNull();
+    // Copied properties propagate to both halves.
+    expect(first.maxSpeed).toBe(1.5);
+    expect(second.orientationType).toBe("GLOBAL");
+    expect(second.rotationAllowed).toBe(false);
+  });
+
+  it("splits a curved edge so each half keeps the curve shape", () => {
+    const map = {
+      ...createEmptyMap("Curve"),
+      nodes: [
+        { id: "a", label: "A", x: 0, y: 0 },
+        { id: "b", label: "B", x: 8, y: 0 },
+      ],
+      edges: [
+        makeEdge({
+          from: "a",
+          to: "b",
+          trajectory: createQuadraticBezierTrajectory({ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 4, y: 4 }),
+        }),
+      ],
+    };
+    const edge = map.edges[0]!;
+    const split = splitEdge(edge, map.nodes[0]!, map.nodes[1]!, map);
+
+    expect(split).not.toBeNull();
+    // Split node sits at the curve's t=0.5 point {4,2}.
+    expect(split!.node).toMatchObject({ x: 4, y: 2 });
+    const [first, second] = split!.edges;
+    expect(first.trajectory?.controlPoints).toEqual([
+      { x: 0, y: 0 },
+      { x: 2, y: 2 },
+      { x: 4, y: 2 },
+    ]);
+    expect(second.trajectory?.controlPoints).toEqual([
+      { x: 4, y: 2 },
+      { x: 6, y: 2 },
+      { x: 8, y: 0 },
+    ]);
+  });
+
+  it("returns null when splitting an unsupported (non-quadratic) trajectory", () => {
+    const map = {
+      ...createEmptyMap("Cubic"),
+      nodes: [
+        { id: "a", label: "A", x: 0, y: 0 },
+        { id: "b", label: "B", x: 5, y: 0 },
+      ],
+      edges: [
+        makeEdge({
+          from: "a",
+          to: "b",
+          trajectory: {
+            degree: 3,
+            knotVector: [0, 0, 0, 0, 1, 1, 1, 1],
+            controlPoints: [{ x: 0, y: 0 }, { x: 1, y: 3 }, { x: 4, y: 3 }, { x: 5, y: 0 }],
+          },
+        }),
+      ],
+    };
+    const edge = map.edges[0]!;
+    expect(splitEdge(edge, map.nodes[0]!, map.nodes[1]!, map)).toBeNull();
+  });
+
+  it("resets a reverse edge to reuse the selected edge's quadratic handle", () => {
+    const from = { id: "b", label: "B", x: 5, y: 0 };
+    const to = { id: "a", label: "A", x: 0, y: 0 };
+    const reverseEdge = makeEdge({ from: "b", to: "a", trajectory: null });
+    const selectedEdge = makeEdge({
+      from: "a",
+      to: "b",
+      trajectory: createQuadraticBezierTrajectory({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 2.5, y: 3 }),
+    });
+
+    const result = resetReverseEdgeToSelectedCurvePath(reverseEdge, from, to, selectedEdge);
+    // Reverse edge spans b(5,0) -> a(0,0) but reuses the selected handle {2.5,3}.
+    expect(result.trajectory?.controlPoints).toEqual([
+      { x: 5, y: 0 },
+      { x: 2.5, y: 3 },
+      { x: 0, y: 0 },
+    ]);
+  });
+
+  it("falls back to a default-handle curve when the selected edge is not a supported quadratic", () => {
+    const from = { id: "b", label: "B", x: 5, y: 0 };
+    const to = { id: "a", label: "A", x: 0, y: 0 };
+    const reverseEdge = makeEdge({ from: "b", to: "a", trajectory: null });
+    const selectedEdge = makeEdge({ from: "a", to: "b", trajectory: null });
+
+    const result = resetReverseEdgeToSelectedCurvePath(reverseEdge, from, to, selectedEdge);
+    expect(isSupportedQuadraticBezier(result.trajectory)).toBe(true);
+    // Endpoints follow from/to; the handle is the auto-generated default, not {2.5,3}.
+    expect(result.trajectory?.controlPoints[0]).toMatchObject({ x: 5, y: 0 });
+    expect(result.trajectory?.controlPoints[2]).toMatchObject({ x: 0, y: 0 });
+    expect(result.trajectory?.controlPoints[1]).not.toMatchObject({ x: 2.5, y: 3 });
   });
 });
