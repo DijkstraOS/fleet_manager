@@ -1,5 +1,5 @@
-import { createDemoMap, type MapDocument, type RouteDocument, type VdaOrder } from "@agv/core";
-import { beforeEach, describe, expect, it } from "vitest";
+import { createDemoMap, type MapDocument, type RouteDocument, type VdaOrder, type VdaState } from "@agv/core";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   FleetGateway,
   KnownAgv,
@@ -54,6 +54,67 @@ describe("server services", () => {
     expect(result.status).toBe("sent");
     expect(sentOrder?.nodes.map((node) => node.nodeId)).toEqual(["dock-a", "corr-1"]);
     expect(realtimeMessages[0]?.type).toBe("order_status");
+  });
+
+  it("rejects an order whose first node is not where the AGV is", async () => {
+    const handlers = createOrderHandlers(createRepository(), fleet, realtime);
+
+    // The AGV reports it is at dock-a, but this order would start it at corr-1.
+    await expect(handlers.sendOrder({
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["corr-1", "dock-a"],
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'Order starts at node "corr-1" but SIM-001 is at "dock-a".',
+    });
+    expect(sentOrders).toHaveLength(0);
+  });
+
+  it("publishes but warns when the AGV has not reported a position", async () => {
+    const fleetWithoutState = createFleet({ ...knownAgv, state: null });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const handlers = createOrderHandlers(createRepository(), fleetWithoutState, realtime);
+
+    const result = await handlers.sendOrder({
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["dock-a", "corr-1"],
+    });
+
+    expect(result.status).toBe("sent");
+    expect(sentOrders).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+
+  it("stops a looping resend once the AGV is no longer at the route start", async () => {
+    const agv = { ...knownAgv, state: stateAt("dock-a") };
+    const handlers = createOrderHandlers(createRepository(), createFleet(agv), realtime);
+
+    const result = await handlers.sendOrder({
+      mapId: map.id,
+      agvSerialNumber: "SIM-001",
+      routeNodeIds: ["dock-a", "corr-1", "dock-a"],
+      loop: true,
+    });
+    expect(sentOrders).toHaveLength(1);
+
+    // The AGV reports it ended somewhere off the route before the loop resends,
+    // so the next iteration's first node no longer matches its position.
+    agv.state = stateAt("corr-1");
+    handlers.handleOrderStatus({
+      orderId: result.orderId,
+      serialNumber: "SIM-001",
+      status: "completed",
+    });
+    await flushPromises();
+
+    expect(sentOrders).toHaveLength(1);
+    expect(realtimeMessages.at(-1)).toMatchObject({
+      type: "order_status",
+      status: "failed",
+    });
   });
 
   it("saves and deletes map-scoped routes", async () => {
@@ -177,27 +238,37 @@ const realtime = {
   close: async () => {},
 };
 
-const fleet: FleetGateway = {
-  listAgvs: () => [knownAgv],
-  getAgv: (serialNumber) => serialNumber === knownAgv.serialNumber ? knownAgv : undefined,
-  publishOrder: async (_agv, order) => {
-    sentOrder = order;
-    sentOrders.push(order);
-    return undefined;
-  },
-  start: async () => {},
-  close: async () => {},
-};
+function createFleet(agv: KnownAgv): FleetGateway {
+  return {
+    listAgvs: () => [agv],
+    getAgv: (serialNumber) => serialNumber === agv.serialNumber ? agv : undefined,
+    publishOrder: async (_agv, order) => {
+      sentOrder = order;
+      sentOrders.push(order);
+      return undefined;
+    },
+    start: async () => {},
+    close: async () => {},
+  };
+}
+
+// The order alignment check only consults `state.lastNodeId`, so a stub carrying
+// just that field is enough to position the AGV for these tests.
+function stateAt(lastNodeId: string): VdaState {
+  return { lastNodeId } as unknown as VdaState;
+}
 
 const knownAgv: KnownAgv = {
   serialNumber: "SIM-001",
   manufacturer: "DijkstraSim",
   mapId: "demo-grid",
   connectionState: "ONLINE",
-  state: null,
+  state: stateAt("dock-a"),
   visualization: null,
   lastSeenAt: new Date(0).toISOString(),
 };
+
+const fleet: FleetGateway = createFleet(knownAgv);
 
 function createRepository(): MapRepository {
   return {

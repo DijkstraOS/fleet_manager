@@ -1,6 +1,6 @@
 import { buildVdaOrder } from "@agv/core";
 import type { OrderDraft } from "@agv/core";
-import type { FleetGateway, MapRepository, OrderHandlers, OrderResult, RealtimePublisher } from "../domain/ports";
+import type { FleetGateway, KnownAgv, MapRepository, OrderHandlers, OrderResult, RealtimePublisher } from "../domain/ports";
 
 export interface OrderMetadata {
   routeId?: string;
@@ -59,6 +59,8 @@ export function createOrderHandlers(
 
     const agv = fleet.getAgv(draft.agvSerialNumber);
     if (!agv) throw createServiceError(404, "AGV not connected.");
+
+    assertOrderStartsAtAgv(agv, draft);
 
     const order = buildVdaOrder(map, draft, options.orderId);
     const metadata = metadataForDraft(draft, options);
@@ -201,6 +203,37 @@ function cloneLoopDraft(draft: OrderDraft): OrderDraft {
     ...(draft.routeName ? { routeName: draft.routeName } : {}),
     loop: true,
   };
+}
+
+/**
+ * VDA5050 requires an order's first node to be the node the vehicle is currently
+ * on (within its deviation range). An order that starts elsewhere can send a
+ * compliant vehicle down an unexpected path -- it is the order shape that let the
+ * simulated AGV teleport onto the wrong edge and shortcut its route -- so we
+ * refuse to emit it toward a live vehicle. The AGV's reported `state.lastNodeId`
+ * is its last reached / current node; it is `""` until the AGV reports one and
+ * `state` is null until any state arrives. When we know where the AGV is, the
+ * route must start there; when we don't, we publish but warn, since we cannot
+ * confirm the start.
+ */
+function assertOrderStartsAtAgv(agv: KnownAgv, draft: OrderDraft) {
+  const start = draft.routeNodeIds[0];
+  if (!start) return;
+
+  const currentNode = agv.state?.lastNodeId;
+  if (!currentNode) {
+    console.warn(
+      `[order] ${agv.serialNumber} has not reported a position; publishing order starting at "${start}" without confirming the AGV is there.`
+    );
+    return;
+  }
+
+  if (start !== currentNode) {
+    throw createServiceError(
+      409,
+      `Order starts at node "${start}" but ${agv.serialNumber} is at "${currentNode}".`
+    );
+  }
 }
 
 function assertLoopableRoute(draft: OrderDraft) {
