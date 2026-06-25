@@ -36,6 +36,7 @@ export function RouteWorkspacePanel() {
     selectedOrderStatus?.loop
     && selectedOrderStatus.status !== "completed"
     && selectedOrderStatus.status !== "failed"
+    && selectedOrderStatus.status !== "rejected"
     && selectedOrderStatus.status !== "loop stopped"
   );
   const { saveRoute, deleteRoute, sendRoute, stopLoop } = useRouteCommands({

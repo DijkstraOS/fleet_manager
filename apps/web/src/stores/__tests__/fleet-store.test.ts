@@ -76,6 +76,25 @@ describe("fleet store", () => {
     expect(state.orderStatuses["SIM-001"]?.loopIteration).toBe(3);
     expect(state.orderStatus).toBe("SIM-001 Dock Loop: sent · loop 3");
   });
+
+  it("surfaces the reason when an order is rejected", () => {
+    useFleetStore.getState().handleRealtimeMessage({
+      type: "order_status",
+      serialNumber: "SIM-001",
+      orderId: "order-bad",
+      status: "rejected",
+      routeName: "Dock Loop",
+      timestamp: new Date(0).toISOString(),
+      reason: 'Order starts at node "corr-1" but the AGV is at "dock-a".',
+    });
+
+    const state = useFleetStore.getState();
+    expect(state.orderStatuses["SIM-001"]?.status).toBe("rejected");
+    expect(state.orderStatuses["SIM-001"]?.reason).toContain("corr-1");
+    expect(state.orderStatus).toBe(
+      'SIM-001 Dock Loop: rejected — Order starts at node "corr-1" but the AGV is at "dock-a".'
+    );
+  });
 });
 
 function stateFor(lastNodeId: string) {

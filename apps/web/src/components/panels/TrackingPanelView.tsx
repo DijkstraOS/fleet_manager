@@ -12,6 +12,7 @@ export interface TrackingPanelOrderStatus {
   routeName?: string;
   loop?: boolean;
   loopIteration?: number;
+  reason?: string;
 }
 
 export function TrackingPanelView(props: {
@@ -68,6 +69,8 @@ export function TrackingPanelView(props: {
 }
 
 function formatOrderStatus(order: TrackingPanelOrderStatus) {
-  if (!order.loop) return order.status;
-  return order.loopIteration ? `${order.status} · loop ${order.loopIteration}` : order.status;
+  const base = order.loop && order.loopIteration
+    ? `${order.status} · loop ${order.loopIteration}`
+    : order.status;
+  return order.reason ? `${base} — ${order.reason}` : base;
 }

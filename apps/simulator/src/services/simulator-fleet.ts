@@ -2,6 +2,7 @@ import {
   acceptOrder,
   advanceAgv,
   createSimulatedAgv,
+  orderRejectionReason,
   type SimulatedAgv,
 } from "../simulation";
 import type { MapDocument, VdaOrder } from "@agv/core";
@@ -24,9 +25,10 @@ export interface SimulatorFleetPublisher {
   publishAgv: (agv: SimulatedAgv) => void;
   publishConnection: (agv: SimulatedAgv, connectionState: "ONLINE" | "OFFLINE") => void;
   publishOrderStatus: (data: {
-    status: "received" | "completed" | "failed";
+    status: "received" | "completed" | "failed" | "rejected";
     orderId: string;
     serialNumber: string;
+    reason?: string;
   }) => void;
 }
 
@@ -74,6 +76,21 @@ export function createSimulatorFleet(options: SimulatorFleetOptions): SimulatorF
     acceptOrder: (envelope) => {
       const current = activeAgvs.get(envelope.serialNumber);
       if (!current) return;
+
+      // Refuse (and flag) an order the AGV cannot execute from its current
+      // position instead of driving an uncommanded path. The existing order, if
+      // any, is left untouched.
+      const rejection = orderRejectionReason(current, envelope.order);
+      if (rejection) {
+        options.publisher.publishOrderStatus({
+          status: "rejected",
+          orderId: envelope.order.orderId,
+          serialNumber: envelope.serialNumber,
+          reason: rejection,
+        });
+        options.log?.log(`[sim] ${envelope.serialNumber} rejected order ${envelope.order.orderId}: ${rejection}`);
+        return;
+      }
 
       const next = acceptOrder(current, envelope.order);
       activeAgvs.set(envelope.serialNumber, next);

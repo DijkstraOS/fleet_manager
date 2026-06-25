@@ -42,17 +42,38 @@ export function createSimulatedAgv(params: {
   };
 }
 
-export function acceptOrder(agv: SimulatedAgv, order: VdaOrder): SimulatedAgv {
-  const remainingNodes = [...order.nodes];
-  const first = remainingNodes[0];
-  if (first && first.nodeId === agv.currentNodeId) {
-    remainingNodes.shift();
+/**
+ * Returns a human-readable reason the AGV must refuse this order, or null if the
+ * order is safe to accept. Per VDA5050 the order's first node is the node the
+ * vehicle is currently standing on; an order whose first node is somewhere else
+ * cannot be executed from where the AGV is, and a real vehicle would reject it
+ * rather than guess a path to the start. Accepting it is what previously let the
+ * simulated AGV teleport onto an uncommanded edge.
+ */
+export function orderRejectionReason(agv: SimulatedAgv, order: VdaOrder): string | null {
+  const first = order.nodes[0];
+  if (!first) return "Order contains no nodes.";
+  if (first.nodeId !== agv.currentNodeId) {
+    return `Order starts at node "${first.nodeId}" but the AGV is at "${agv.currentNodeId}".`;
   }
+  return null;
+}
+
+export function acceptOrder(agv: SimulatedAgv, order: VdaOrder): SimulatedAgv {
+  // A VDA5050 order is [n0, e0, n1, e1, ... e(k-1), nk] where edge e_i connects
+  // n_i -> n_(i+1). n0 is the AGV's current node, so it is never a travel target.
+  // The remaining travel targets are [n1 ... nk] and they line up one-to-one with
+  // the edges [e0 ... e(k-1)]: remainingEdges[i] is the edge that leads to
+  // remainingNodes[i]. Always dropping the leading node (rather than only when it
+  // matches the current node) keeps these two lists the same length and in lockstep,
+  // so advanceAgv can never pair a target with the wrong edge.
+  const remainingNodes = order.nodes.slice(1);
+  const remainingEdges = [...order.edges];
   return {
     ...agv,
     currentOrder: order,
     remainingNodes,
-    remainingEdges: [...order.edges],
+    remainingEdges,
     activeEdgeDistance: 0,
     driving: remainingNodes.length > 0,
   };
@@ -68,18 +89,28 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
   const targetPosition = target.nodePosition;
   if (!targetPosition) return { ...agv, driving: false };
 
-  const dx = targetPosition.x - agv.x;
-  const dy = targetPosition.y - agv.y;
-  const distance = Math.hypot(dx, dy);
   const activeEdge = agv.remainingEdges[0];
-  const maxSpeed = activeEdge?.maxSpeed || agv.speedMetersPerSecond;
+
+  // Safety stop: reaching the target means traversing activeEdge, which is only
+  // valid when the AGV is standing at that edge's start node. If the order and the
+  // AGV's position disagree, HOLD POSITION — do not improvise a path. Following the
+  // curve would teleport the vehicle onto an uncommanded trajectory; and a straight
+  // line to the target is no safer, since it can cut across shelving or walls that
+  // the mapped edge was drawn to route around. Standing still is the only safe move.
+  // (Orders accepted by the fleet always start at the AGV's node, so this is a
+  // last-resort guard rather than a path the simulator takes in normal operation.)
+  if (!activeEdge || activeEdge.startNodeId !== agv.currentNodeId) {
+    return { ...agv, driving: false };
+  }
+
+  const maxSpeed = activeEdge.maxSpeed || agv.speedMetersPerSecond;
   const speed = Math.min(agv.speedMetersPerSecond, maxSpeed);
   const step = speed * (dtMs / 1000);
 
-  if (activeEdge && isSupportedQuadraticBezier(activeEdge.trajectory as EdgeTrajectory | null | undefined)) {
-    const distance = agv.activeEdgeDistance + step;
-    const pose = getQuadraticBezierPoseAtDistance(activeEdge.trajectory as EdgeTrajectory, distance);
-    if (distance >= pose.totalLength) {
+  if (isSupportedQuadraticBezier(activeEdge.trajectory as EdgeTrajectory | null | undefined)) {
+    const traveled = agv.activeEdgeDistance + step;
+    const pose = getQuadraticBezierPoseAtDistance(activeEdge.trajectory as EdgeTrajectory, traveled);
+    if (traveled >= pose.totalLength) {
       return arriveAtTarget(agv, target, targetPosition);
     }
     return {
@@ -87,12 +118,18 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
       x: pose.x,
       y: pose.y,
       theta: pose.theta,
-      activeEdgeDistance: distance,
+      activeEdgeDistance: traveled,
       batteryCharge: Math.max(0, agv.batteryCharge - 0.01),
       driving: true,
     };
   }
 
+  // The edge carries no trajectory, so it is a straight segment by design. The AGV
+  // is standing at its start node (guaranteed above), so a straight line to the
+  // target node follows the commanded edge rather than a fabricated shortcut.
+  const dx = targetPosition.x - agv.x;
+  const dy = targetPosition.y - agv.y;
+  const distance = Math.hypot(dx, dy);
   if (distance <= Math.max(step, 0.001)) {
     return arriveAtTarget(agv, target, targetPosition);
   }
