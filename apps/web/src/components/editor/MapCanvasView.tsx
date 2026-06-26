@@ -1,5 +1,6 @@
 import type { PointerEvent, RefObject } from "react";
 import {
+  getActionNodeIds,
   getQuadraticBezierHandle,
   isSupportedQuadraticBezier,
   quadraticBezierSvgPath,
@@ -10,7 +11,13 @@ import {
   type VdaVisualization,
 } from "@agv/core";
 import { LocateFixed, Minus, Plus } from "lucide-react";
-import { GRID, getStraightLineGeometry, routeContainsEdge, type CanvasBounds } from "../../lib/geometry";
+import {
+  GRID,
+  SUPPORT_NODE_HIT_RADIUS,
+  nodeRenderRadius,
+  routeContainsEdge,
+  type CanvasBounds,
+} from "../../lib/geometry";
 import type { EditorBackgroundImage, Selection, Tool, WorkspaceMode } from "../../types";
 
 export interface CanvasAgv {
@@ -65,8 +72,7 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         />
         <GridLayer bounds={props.bounds} />
         <EdgeLayer
-          edges={props.map.edges}
-          nodes={props.map.nodes}
+          map={props.map}
           selection={props.selection}
           routeNodeIds={props.routeNodeIds}
           workspaceMode={props.workspaceMode}
@@ -79,7 +85,8 @@ export function MapCanvasView(props: MapCanvasViewProps) {
           onCurveHandlePointerDown={props.onCurveHandlePointerDown}
         />
         <NodeLayer
-          nodes={props.map.nodes}
+          map={props.map}
+          bounds={props.bounds}
           selection={props.selection}
           edgeStartNodeId={props.edgeStartNodeId}
           routeNodeIds={props.routeNodeIds}
@@ -103,8 +110,11 @@ function CanvasDefs() {
       <pattern id="grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
         <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="#d7dee8" strokeWidth="0.015" />
       </pattern>
-      <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-        <path d="M 0 0 L 10 5 L 0 10 z" />
+      {/* Slim directional cue, same slate as the .edge stroke so the head reads as part
+          of the line. refX=10 (the viewBox tip) lands the arrow tip at the path end —
+          the target node center — so the head sits at the node rather than overshooting. */}
+      <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto">
+        <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#475569" />
       </marker>
     </defs>
   );
@@ -179,34 +189,37 @@ function BackgroundImageLayer(props: {
 }
 
 function EdgeLayer(props: {
-  edges: MapEdge[];
-  nodes: MapNode[];
+  map: MapDocument;
   selection: Selection;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
 }) {
+  const edges = props.map.edges;
+  const nodes = props.map.nodes;
   return (
     <>
-      {props.edges.map((edge) => {
-        const from = props.nodes.find((node) => node.id === edge.from);
-        const to = props.nodes.find((node) => node.id === edge.to);
+      {edges.map((edge) => {
+        const from = nodes.find((node) => node.id === edge.from);
+        const to = nodes.find((node) => node.id === edge.to);
         if (!from || !to) return null;
         const active = props.selection?.type === "edge" && props.selection.id === edge.id;
         const routeActive = routeContainsEdge(props.routeNodeIds, edge.from, edge.to);
         const className = edgeClass(active, routeActive, props.workspaceMode);
+        // Edges run as one continuous line from source node center to target node
+        // center: curved edges use the full Bézier path, straight edges draw raw
+        // from->to. Forward and reverse twins intentionally overlap on the same line.
         const pathData = quadraticBezierSvgPath(edge.trajectory);
-        const line = getStraightLineGeometry(edge, from, to, props.edges, props.nodes);
         return (
           <g key={edge.id} onPointerDown={(event) => props.onEdgePointerDown(event, edge.id)}>
             {pathData ? (
               <path d={pathData} className={className} markerEnd="url(#arrow)" fill="none" />
             ) : (
               <line
-                x1={line.x1}
-                y1={line.y1}
-                x2={line.x2}
-                y2={line.y2}
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
                 className={className}
                 markerEnd="url(#arrow)"
               />
@@ -261,21 +274,32 @@ function AgvOverlayLayer(props: { agvs: CanvasAgv[] }) {
 }
 
 function NodeLayer(props: {
-  nodes: MapNode[];
+  map: MapDocument;
+  bounds: CanvasBounds;
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
 }) {
+  // Action/station nodes (derived from preserved LIF data) stay hefty; pure
+  // path-support nodes shrink to a small dot floored against the current zoom.
+  const actionNodeIds = getActionNodeIds(props.map);
   return (
     <>
-      {props.nodes.map((node) => (
-        <g key={node.id} onPointerDown={(event) => props.onNodePointerDown(event, node)}>
-          <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds, props.workspaceMode)} cx={node.x} cy={node.y} r="0.28" />
-          <text className="node-label" x={node.x + 0.35} y={node.y - 0.35}>{node.label || node.id}</text>
-        </g>
-      ))}
+      {props.map.nodes.map((node) => {
+        const isAction = actionNodeIds.has(node.id);
+        const radius = nodeRenderRadius(isAction, props.bounds.width);
+        return (
+          <g key={node.id} onPointerDown={(event) => props.onNodePointerDown(event, node)}>
+            {!isAction && (
+              <circle className="node-hit" cx={node.x} cy={node.y} r={SUPPORT_NODE_HIT_RADIUS} />
+            )}
+            <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds, props.workspaceMode)} cx={node.x} cy={node.y} r={radius} />
+            <text className="node-label" x={node.x + 0.35} y={node.y - 0.35}>{node.label || node.id}</text>
+          </g>
+        );
+      })}
     </>
   );
 }

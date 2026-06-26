@@ -535,6 +535,14 @@ h2 {
   cursor: grab;
 }
 
+/* Invisible hit target behind a small support-node dot so it stays grabbable. */
+.node-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+  cursor: grab;
+}
+
 .node.subtle {
   stroke: #94a3b8;
   opacity: 0.58;
@@ -613,6 +621,17 @@ h2 {
   background: white;
   color: #172033;
   min-width: 0;
+}
+
+.field-with-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-with-action .icon-button {
+  height: 34px;
 }
 
 .range-field {

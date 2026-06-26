@@ -10,6 +10,7 @@ import { RotateCcw, Trash2 } from "lucide-react";
 export function MapInspectorCardView(props: {
   inspector: ReactNode;
   canAddReverseEdge: boolean;
+  hasReverseEdge: boolean;
   onDeleteSelection: () => void;
   onAddReverseEdge: () => void;
 }) {
@@ -20,7 +21,7 @@ export function MapInspectorCardView(props: {
         <h2>Selection</h2>
         <div className="command-stack">
           <button className="secondary-button" type="button" onClick={props.onAddReverseEdge} disabled={!props.canAddReverseEdge}>
-            <RotateCcw /> Add reverse edge
+            <RotateCcw /> {props.hasReverseEdge ? "Select reverse edge" : "Add reverse edge"}
           </button>
           <button className="secondary-button danger" type="button" onClick={props.onDeleteSelection}>
             <Trash2 /> Delete selection

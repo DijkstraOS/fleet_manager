@@ -13,7 +13,10 @@ import {
   findEdgeById,
   getQuadraticBezierPoseAtDistance,
   exportLifDocument,
+  getActionNodeIds,
+  getStationNodeIds,
   importLifDocument,
+  nodeIdEditPolicy,
   isSupportedQuadraticBezier,
   moveNode,
   nextRouteId,
@@ -614,5 +617,120 @@ describe("map operations", () => {
     expect(next.nodes.map((item) => item.id)).toEqual(["a", "b", "c", "d"]);
     expect(findEdgeById(next, "b-a")).toBeUndefined();
     expect(next.updatedAt).toBe(map.updatedAt);
+  });
+});
+
+describe("action-node selector", () => {
+  function node(id: string, unsupported?: MapNode["unsupported"]): MapNode {
+    return { id, label: id, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
+  }
+
+  function mapWith(nodes: MapNode[], unsupported?: MapDocument["unsupported"]): MapDocument {
+    return {
+      ...createEmptyMap("Actions"),
+      nodes,
+      edges: [],
+      ...(unsupported ? { unsupported } : {}),
+    };
+  }
+
+  it("includes a node whose vehicleTypeNodeProperties carry a non-empty actions array", () => {
+    const map = mapWith([
+      node("act", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "pick" }] }] }),
+    ]);
+    expect([...getActionNodeIds(map)]).toEqual(["act"]);
+  });
+
+  it("includes a node referenced by a station's interactionNodeIds", () => {
+    const map = mapWith(
+      [node("station-node")],
+      { stations: [{ stationId: "s1", interactionNodeIds: ["station-node"] }] }
+    );
+    expect([...getActionNodeIds(map)]).toEqual(["station-node"]);
+  });
+
+  it("excludes a plain path node with no actions and no station reference", () => {
+    const map = mapWith([
+      node("plain", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [] }] }),
+    ]);
+    expect(getActionNodeIds(map).size).toBe(0);
+  });
+
+  it("returns an empty set when unsupported data is missing or empty", () => {
+    expect(getActionNodeIds(mapWith([node("a"), node("b")])).size).toBe(0);
+    expect(getActionNodeIds(mapWith([node("a")], {})).size).toBe(0);
+    expect(getActionNodeIds(mapWith([node("a", { vehicleTypeNodeProperties: [] })], { stations: [] })).size).toBe(0);
+  });
+
+  it("includes a node satisfying both rules exactly once", () => {
+    const map = mapWith(
+      [node("both", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "drop" }] }] })],
+      { stations: [{ stationId: "s1", interactionNodeIds: ["both"] }] }
+    );
+    expect([...getActionNodeIds(map)]).toEqual(["both"]);
+  });
+});
+
+describe("station-node selector", () => {
+  function node(id: string, unsupported?: MapNode["unsupported"]): MapNode {
+    return { id, label: id, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
+  }
+
+  function mapWith(nodes: MapNode[], unsupported?: MapDocument["unsupported"]): MapDocument {
+    return {
+      ...createEmptyMap("Stations"),
+      nodes,
+      edges: [],
+      ...(unsupported ? { unsupported } : {}),
+    };
+  }
+
+  it("includes a node referenced by a station's interactionNodeIds", () => {
+    const map = mapWith(
+      [node("station-node")],
+      { stations: [{ stationId: "s1", interactionNodeIds: ["station-node"] }] }
+    );
+    expect([...getStationNodeIds(map)]).toEqual(["station-node"]);
+  });
+
+  it("excludes a node that merely carries its own actions but is not in any station", () => {
+    const map = mapWith([
+      node("act", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "pick" }] }] }),
+    ]);
+    expect(getStationNodeIds(map).size).toBe(0);
+    // ...while the combined action/station selector still counts it.
+    expect([...getActionNodeIds(map)]).toEqual(["act"]);
+  });
+
+  it("returns an empty set when station data is missing or empty", () => {
+    expect(getStationNodeIds(mapWith([node("a")])).size).toBe(0);
+    expect(getStationNodeIds(mapWith([node("a")], {})).size).toBe(0);
+    expect(getStationNodeIds(mapWith([node("a")], { stations: [] })).size).toBe(0);
+  });
+});
+
+describe("node id edit policy", () => {
+  it("is editable when nothing references the node", () => {
+    expect(
+      nodeIdEditPolicy({ hasEdges: false, isStationReferenced: false, isRouteReferenced: false })
+    ).toBe("editable");
+  });
+
+  it("warns about edges when the node only has edges", () => {
+    expect(
+      nodeIdEditPolicy({ hasEdges: true, isStationReferenced: false, isRouteReferenced: false })
+    ).toBe("editable-with-edge-warning");
+  });
+
+  it("locks when a station or route references the node, even alongside edges", () => {
+    expect(
+      nodeIdEditPolicy({ hasEdges: false, isStationReferenced: true, isRouteReferenced: false })
+    ).toBe("locked");
+    expect(
+      nodeIdEditPolicy({ hasEdges: false, isStationReferenced: false, isRouteReferenced: true })
+    ).toBe("locked");
+    expect(
+      nodeIdEditPolicy({ hasEdges: true, isStationReferenced: true, isRouteReferenced: true })
+    ).toBe("locked");
   });
 });

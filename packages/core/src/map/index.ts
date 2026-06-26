@@ -196,3 +196,4 @@ export type { EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, Ro
 export * from "./ids";
 export * from "./trajectory";
 export * from "./operations";
+export * from "./selectors";

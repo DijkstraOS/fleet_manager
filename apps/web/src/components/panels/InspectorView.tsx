@@ -1,9 +1,11 @@
-import { getQuadraticBezierHandle, isSupportedQuadraticBezier, type MapEdge, type MapNode } from "@agv/core";
-import { Scissors } from "lucide-react";
+import { getQuadraticBezierHandle, isSupportedQuadraticBezier, type MapEdge, type MapNode, type NodeIdEditPolicy } from "@agv/core";
+import { Pencil, Scissors } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 export function InspectorView(props: {
   node: MapNode | null;
   edge: MapEdge | null;
+  nodeIdEditPolicy: NodeIdEditPolicy;
   onChangeNode: (node: MapNode) => void;
   onChangeEdge: (edge: MapEdge) => void;
   onMakeEdgeCurve: () => void;
@@ -15,7 +17,7 @@ export function InspectorView(props: {
   onBifurcateEdge: () => void;
   onChangeCurveHandle: (x: number, y: number) => void;
 }) {
-  if (props.node) return <NodeInspector node={props.node} onChange={props.onChangeNode} />;
+  if (props.node) return <NodeInspector node={props.node} idEditPolicy={props.nodeIdEditPolicy} onChange={props.onChangeNode} />;
   if (props.edge) {
     return (
       <EdgeInspector
@@ -41,16 +43,75 @@ export function InspectorView(props: {
   );
 }
 
-function NodeInspector(props: { node: MapNode; onChange: (node: MapNode) => void }) {
+function NodeInspector(props: { node: MapNode; idEditPolicy: NodeIdEditPolicy; onChange: (node: MapNode) => void }) {
   return (
     <section>
       <h2>Node</h2>
-      <Field label="ID" value={props.node.id} onChange={(id) => props.onChange({ ...props.node, id })} />
+      <NodeIdField node={props.node} policy={props.idEditPolicy} onChange={props.onChange} />
       <Field label="Label" value={props.node.label} onChange={(label) => props.onChange({ ...props.node, label })} />
       <NumberField label="X" value={props.node.x} onChange={(x) => props.onChange({ ...props.node, x })} />
       <NumberField label="Y" value={props.node.y} onChange={(y) => props.onChange({ ...props.node, y })} />
       <NumberField label="Theta" value={props.node.theta ?? 0} onChange={(theta) => props.onChange({ ...props.node, theta })} />
     </section>
+  );
+}
+
+/**
+ * The node ID is read-only by default. A pencil opts into editing, gated by the
+ * live policy: `"locked"` shows no pencil at all; `"editable-with-edge-warning"`
+ * requires confirming a warning first; `"editable"` unlocks on the first tap.
+ * `isEditing` is transient UI state only — it resets when the selected node
+ * changes, so each selection starts read-only.
+ */
+function NodeIdField(props: { node: MapNode; policy: NodeIdEditPolicy; onChange: (node: MapNode) => void }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const locked = props.policy === "locked";
+
+  // Each new node selection starts read-only. The selected node's id mutates on
+  // every keystroke while editing (the rename cascades through `updateNode`), so
+  // we can't relock on any id change — that would drop focus mid-rename. We mark
+  // self-inflicted id changes (our own `onChange`) and relock only when the id
+  // changes WITHOUT that mark, i.e. a different node was selected.
+  const previousIdRef = useRef(props.node.id);
+  const selfRenamedRef = useRef(false);
+  useEffect(() => {
+    if (previousIdRef.current !== props.node.id && !selfRenamedRef.current) {
+      setIsEditing(false);
+    }
+    previousIdRef.current = props.node.id;
+    selfRenamedRef.current = false;
+  });
+
+  function onPencilClick() {
+    if (props.policy === "editable-with-edge-warning") {
+      const confirmed = window.confirm("You're about to edit the ID of a node that has edges.");
+      if (!confirmed) return;
+    }
+    setIsEditing(true);
+  }
+
+  function onIdChange(id: string) {
+    selfRenamedRef.current = true;
+    props.onChange({ ...props.node, id });
+  }
+
+  return (
+    <label className="field">
+      <span>ID</span>
+      <div className="field-with-action">
+        <input
+          value={props.node.id}
+          disabled={locked || !isEditing}
+          onChange={(event) => onIdChange(event.target.value)}
+        />
+        {!locked && !isEditing && (
+          <button type="button" className="icon-button" aria-label="Edit ID" onClick={onPencilClick}>
+            <Pencil />
+          </button>
+        )}
+      </div>
+      {locked && <span className="muted">ID is referenced by a route or station and can't be edited.</span>}
+    </label>
   );
 }
 

@@ -1,11 +1,29 @@
-import { quadraticBezierSvgPath, type MapDocument, type MapEdge, type MapNode } from "@agv/core";
+import {
+  type MapDocument,
+} from "@agv/core";
 
 export const GRID = 1;
 
-// Parallel straight edges that share a corridor are nudged apart by this distance
-// (in world units) so each direction stays individually clickable instead of
-// rendering on top of its reverse twin.
-export const STRAIGHT_EDGE_PARALLEL_OFFSET = 0.16;
+// Node rendering radii, in world units. Action/station nodes stay hefty; pure
+// path-support nodes shrink to a small dot that blends into the path. Both tiers
+// keep an invisible hit-target so a tiny dot is still easy to grab.
+export const ACTION_NODE_RADIUS = 0.28;
+export const SUPPORT_NODE_RADIUS = 0.08;
+export const SUPPORT_NODE_HIT_RADIUS = 0.2;
+
+// Support dots are floored to this fraction of the viewport width so they never
+// shrink away when zoomed out. The pixel size of a world-unit radius is
+// proportional to (radius / viewportWidth), so flooring as a fraction of the
+// viewport keeps a roughly constant minimum on-screen size at any zoom level.
+const SUPPORT_NODE_MIN_VIEWPORT_FRACTION = 0.006;
+
+// Node placement snaps to this lattice (in world units / meters). This is finer
+// than the drawn GRID on purpose: the visual grid stays at 1 m for legibility while
+// coordinates land on clean 0.1 m increments. Kept as 1/SNAP_STEP so we can round
+// via integers (Math.round(v * SNAP_PER_UNIT) / SNAP_PER_UNIT) and avoid the float
+// dust that Math.round(v / 0.1) * 0.1 reintroduces.
+const SNAP_PER_UNIT = 10;
+
 export const MIN_VIEWPORT_WIDTH = 3;
 export const MAX_VIEWPORT_WIDTH = 80;
 
@@ -107,7 +125,7 @@ function padExtents(extents: Extents): CanvasBounds {
 }
 
 export function snap(value: number) {
-  return Math.round(value / 0.5) * 0.5;
+  return Math.round(value * SNAP_PER_UNIT) / SNAP_PER_UNIT;
 }
 
 export function screenToWorld(svg: SVGSVGElement, clientX: number, clientY: number) {
@@ -155,89 +173,18 @@ export function panViewport(viewport: CanvasBounds, deltaX: number, deltaY: numb
   };
 }
 
+// Visible radius for a node's main circle. Action/station nodes keep their hefty
+// look; support nodes render as a small dot, floored against the viewport width
+// so they stay visible (never vanish) when zoomed out.
+export function nodeRenderRadius(isAction: boolean, viewportWidth: number): number {
+  if (isAction) return ACTION_NODE_RADIUS;
+  const floor = viewportWidth * SUPPORT_NODE_MIN_VIEWPORT_FRACTION;
+  return Math.max(SUPPORT_NODE_RADIUS, floor);
+}
+
 export function routeContainsEdge(route: string[], from: string, to: string) {
   for (let index = 0; index < route.length - 1; index += 1) {
     if (route[index] === from && route[index + 1] === to) return true;
   }
   return false;
-}
-
-export interface StraightLineGeometry {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
-// Returns the endpoints to draw a straight edge as, offsetting it perpendicular to
-// its direction when it shares a corridor with another straight edge so the two
-// (typically a forward/reverse pair) do not render on top of each other.
-export function getStraightLineGeometry(
-  edge: MapEdge,
-  from: MapNode,
-  to: MapNode,
-  edges: MapEdge[],
-  nodes: MapNode[],
-): StraightLineGeometry {
-  const shouldOffset = edges.some((item) => {
-    if (item.id === edge.id || quadraticBezierSvgPath(item.trajectory)) return false;
-    const otherFrom = nodes.find((node) => node.id === item.from);
-    const otherTo = nodes.find((node) => node.id === item.to);
-    return otherFrom && otherTo && straightSegmentsOverlap(from, to, otherFrom, otherTo);
-  });
-  if (!shouldOffset) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
-
-  const canonical = canonicalStraightDirection(from, to);
-  const dx = canonical.to.x - canonical.from.x;
-  const dy = canonical.to.y - canonical.from.y;
-  const length = Math.hypot(dx, dy);
-  if (length <= 0) return { x1: from.x, y1: from.y, x2: to.x, y2: to.y };
-
-  const side = samePoint(from, canonical.from) && samePoint(to, canonical.to) ? 1 : -1;
-  const offsetX = (-dy / length) * STRAIGHT_EDGE_PARALLEL_OFFSET * side;
-  const offsetY = (dx / length) * STRAIGHT_EDGE_PARALLEL_OFFSET * side;
-  return {
-    x1: from.x + offsetX,
-    y1: from.y + offsetY,
-    x2: to.x + offsetX,
-    y2: to.y + offsetY,
-  };
-}
-
-// True when segment B lies along segment A's infinite line (within tolerance) and
-// their projected extents overlap by more than a hair — i.e. they share a corridor.
-export function straightSegmentsOverlap(aFrom: MapNode, aTo: MapNode, bFrom: MapNode, bTo: MapNode) {
-  const ax = aTo.x - aFrom.x;
-  const ay = aTo.y - aFrom.y;
-  const lengthSquared = ax * ax + ay * ay;
-  if (lengthSquared <= 0) return false;
-  if (Math.abs(cross(ax, ay, bFrom.x - aFrom.x, bFrom.y - aFrom.y)) > 0.001) return false;
-  if (Math.abs(cross(ax, ay, bTo.x - aFrom.x, bTo.y - aFrom.y)) > 0.001) return false;
-
-  const bStart = dot(bFrom.x - aFrom.x, bFrom.y - aFrom.y, ax, ay) / lengthSquared;
-  const bEnd = dot(bTo.x - aFrom.x, bTo.y - aFrom.y, ax, ay) / lengthSquared;
-  const start = Math.max(0, Math.min(bStart, bEnd));
-  const end = Math.min(1, Math.max(bStart, bEnd));
-  return end - start > 0.001;
-}
-
-// Picks a stable orientation for an undirected straight segment (left-to-right, then
-// bottom-to-top) so a forward/reverse edge pair offsets to opposite sides consistently.
-export function canonicalStraightDirection(from: MapNode, to: MapNode) {
-  if (from.x < to.x) return { from, to };
-  if (from.x > to.x) return { from: to, to: from };
-  if (from.y <= to.y) return { from, to };
-  return { from: to, to: from };
-}
-
-function samePoint(left: MapNode, right: MapNode) {
-  return left.id === right.id;
-}
-
-function cross(ax: number, ay: number, bx: number, by: number) {
-  return ax * by - ay * bx;
-}
-
-function dot(ax: number, ay: number, bx: number, by: number) {
-  return ax * bx + ay * by;
 }
