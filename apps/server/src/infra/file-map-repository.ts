@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { createDemoMap, validateMap, type MapDocument } from "@agv/core";
+import { backfillCanvas, createDemoMap, validateMap, type MapDocument } from "@agv/core";
 import type { MapRepository } from "../domain/ports";
 
 export function createFileMapRepository(filePath = resolve(process.cwd(), "data/maps.json")): MapRepository {
@@ -20,7 +20,14 @@ export function createFileMapRepository(filePath = resolve(process.cwd(), "data/
       try {
         const raw = await readFile(filePath, "utf8");
         const parsed = JSON.parse(raw) as MapDocument[];
-        maps = new Map(parsed.map((map) => [map.id, map]));
+        // Back-compat: maps saved before the finite-floor primitive lack a `canvas`,
+        // so they are backfilled to the 200x200 default and uniformly recentered onto
+        // the floor center (headings unchanged). The field then sticks on the next
+        // save, and a map that already has a `canvas` is left exactly as stored.
+        maps = new Map(parsed.map((map) => {
+          const normalized = backfillCanvas(map);
+          return [normalized.id, normalized];
+        }));
       } catch {
         const demo = createDemoMap();
         maps = new Map([[demo.id, demo]]);

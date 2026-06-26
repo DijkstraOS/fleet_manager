@@ -1,6 +1,6 @@
 # Design — Consistent panels + image-defined canvas
 
-**Status:** planned (2026-06-25) · **Backlog:** [`PANEL-1..3`](../issues/), [`CANVAS-1..3`](../issues/)
+**Status:** planned (2026-06-25) · **Backlog:** [`PANEL-1..3`](../issues/), [`CANVAS-0..3`](../issues/)
 
 The durable "why" behind two editor changes. The work itself is sliced **vertically** into the
 issue files above — each is usable and visibly changes the app when done. This doc stays; the issues
@@ -44,18 +44,25 @@ get deleted as they land.
 
 The rule a user learns: **left = your toolkit & lists; right = the thing you clicked.**
 
-### Image-defined, calibrated canvas
+### Finite floor, image-defined, calibrated
 
-- Uploading a background image **defines the canvas**: a fixed frame equal to the image bounds,
-  filled aspect-correctly (replaces auto-fit while an image is present).
+- **The floor is finite and primary.** The canvas is a bounded factory floor with a real meter size
+  (default 200×200 m), persisted in `MapDocument`; zoom/pan are clamped to it, and coordinates are
+  positive from a top-left origin (+X right / +Y down). This exists with or without an image, and is
+  the prerequisite every other canvas behaviour builds on. *(CANVAS-0.)*
+- Uploading a background image **redefines the floor's shape**: the floor adopts the image's aspect
+  ratio and the image fills it edge-to-edge, aspect-correct — the plan is the source of truth for the
+  canvas's shape. *(CANVAS-1.)*
 - **Canvas size = real-world calibration.** Enter the width in meters; height derives from image
   aspect (deliberate unlock for distorted scans). Node x/y are then real meters — to-scale for LIF.
+  *(CANVAS-2.)*
 - **Recalibration rescales existing nodes** so they stay anchored to the same spot on the plan.
-- **Persistence:** calibration (meters/aspect/origin) lives in `MapDocument`; the image is a
-  **server asset** referenced by the document — keeps `data/maps.json` lean and shares the basemap
-  across devices. AGVs never consume the image; only calibrated node coordinates flow to LIF.
+  *(CANVAS-2.)*
+- **Persistence:** the `canvas` size lives in `MapDocument` from the start (CANVAS-0); the image is a
+  **server asset** referenced by the document (CANVAS-3) — keeps `data/maps.json` lean and shares the
+  basemap across devices. AGVs never consume the image; only calibrated node coordinates flow to LIF.
 - The background tool is **type-to-calibrate** (width · aspect-unlock · opacity · replace · remove).
-  The old drag-to-move + corner scale-handle are removed.
+  The old drag-to-move + corner scale-handle are removed. *(CANVAS-1/2.)*
 
 ## Decisions (resolved trade-offs)
 
@@ -65,7 +72,8 @@ The rule a user learns: **left = your toolkit & lists; right = the thing you cli
 | Right card | floats over the edge, collapses when idle | the map never reflows/rescales on selection |
 | Selection actions | travel with the detail (right) | no cross-screen travel between select and act |
 | Scope | Map + Route + Tracking | full cross-tab consistency |
-| Canvas source | image = fixed canvas frame | "the image defines the canvas" |
+| Canvas primitive | finite floor, persisted, positive coords | a factory floor is bounded; the infinite canvas was the root of editor bugs |
+| Canvas source | image redefines the floor's shape (when present) | the floor plan is the source of truth |
 | "Canvas size" | real-world calibration in meters | node coordinates become to-scale for LIF/VDA |
 | Aspect ratio | locked to image, with unlock escape | no distortion by default; correct skewed scans when needed |
 | Recalibration | rescales node coordinates | preserve placement against the plan |
@@ -78,8 +86,8 @@ The rule a user learns: **left = your toolkit & lists; right = the thing you cli
 `PANEL-1` Map tab → `PANEL-2` Route tab → `PANEL-3` Tracking tab.
 
 **Canvas** (model/server/geometry folded into the slice that needs it):
-`CANVAS-1` image defines the canvas (in-session) → `CANVAS-2` calibrate to meters → `CANVAS-3`
-persist the basemap.
+`CANVAS-0` finite floor primitive → `CANVAS-1` image redefines the floor shape → `CANVAS-2` calibrate
+to meters → `CANVAS-3` persist the basemap image. CANVAS-0 is a hard prerequisite for the rest.
 
 Dependencies live *within* each track. The two tracks are independent — either can go first. The one
 cross-track touchpoint: CANVAS slices edit the background section wherever it currently lives, and
@@ -87,9 +95,11 @@ PANEL-1 relocates that section into the left rail. No hard ordering required.
 
 ## Open implementation details (recommended defaults — confirm at build time)
 
-- **Coordinate origin & axis:** anchor the image's top-left at the current world origin and keep the
-  existing axis orientation — do **not** silently flip exported coordinates. A user-settable origin
-  is a later enhancement. *(Decide in CANVAS-2.)*
-- **No image present:** before upload / after remove, keep today's auto-fit-to-content.
-- **Back-compat:** existing maps without calibration fields keep auto-fit and acquire fields on first
-  calibration. *(CANVAS-3.)*
+- **Coordinate origin & axis:** top-left origin at world `(0,0)`, +X right / +Y down, positive
+  coordinates; never silently flip exported coordinates. A user-settable origin is a later
+  enhancement. *(Decided in CANVAS-0; keep the existing simulator-compatible orientation.)*
+- **No image present:** show CANVAS-0's default finite floor (200×200 m), not auto-fit.
+- **Back-compat:** existing maps without a `canvas` field backfill the default floor on load and
+  acquire the field on next save (CANVAS-0); maps without a `background` ref show no basemap
+  (CANVAS-3). Legacy maps with out-of-floor (e.g. negative) coordinates are translated onto the floor
+  on load — never scaled or flipped, so simulator headings are unchanged. *(CANVAS-0.)*

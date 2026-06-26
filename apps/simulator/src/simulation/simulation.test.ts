@@ -31,6 +31,7 @@ function curvedLoopMap(): MapDocument {
     version: "1",
     createdAt: now,
     updatedAt: now,
+    canvas: { width: 200, height: 200 },
     nodes: [
       { id: "A", label: "A", x: 0, y: 0 },
       { id: "B", label: "B", x: 10, y: 0 },
@@ -86,10 +87,13 @@ describe("simulator motion", () => {
   it("follows supported quadratic edge trajectories", () => {
     const map = createDemoMap();
     const edge = map.edges.find((item) => item.from === "dock-a" && item.to === "corr-1")!;
+    const from = map.nodes.find((node) => node.id === "dock-a")!;
+    const to = map.nodes.find((node) => node.id === "corr-1")!;
+    // Bulge the curve up 4 m above the (now floor-centered) endpoints.
     edge.trajectory = createQuadraticBezierTrajectory(
-      { x: 0, y: 0 },
-      { x: 5, y: 0 },
-      { x: 2.5, y: 4 }
+      { x: from.x, y: from.y },
+      { x: to.x, y: to.y },
+      { x: (from.x + to.x) / 2, y: from.y - 4 }
     );
     const order = buildVdaOrder(map, {
       mapId: map.id,
@@ -146,7 +150,10 @@ describe("simulator motion", () => {
 
     expect(agv.currentOrder).toBeNull();
     expect(agv.currentNodeId).toBe("corr-1");
-    expect(agv.y).toBe(0);
+    // dock-a and corr-1 share the same y on the floor-centered demo, so a straight
+    // fallback never leaves that row.
+    const corr1 = map.nodes.find((node) => node.id === "corr-1")!;
+    expect(agv.y).toBe(corr1.y);
   });
 
   it("follows a curved loop across repeated iterations without glitching", () => {

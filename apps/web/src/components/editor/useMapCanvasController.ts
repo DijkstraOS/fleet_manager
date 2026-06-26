@@ -1,22 +1,15 @@
 import { useEffect, useMemo, useRef, type PointerEvent } from "react";
-import type { MapNode } from "@agv/core";
-import { getBounds, panViewport, screenToWorld, screenToWorldRaw, wheelZoomScale, zoomViewport, type CanvasBounds } from "../../lib/geometry";
+import { fitViewportToContent, gridStepForViewport, type MapNode } from "@agv/core";
+import { panViewport, screenToWorld, screenToWorldRaw, wheelZoomScale, zoomViewport, type CanvasBounds } from "../../lib/geometry";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
 import { useRouteStore } from "../../stores/route-store";
-import type { EditorBackgroundImage } from "../../types";
 
 interface PanState {
   clientX: number;
   clientY: number;
   viewport: CanvasBounds;
   moved: boolean;
-}
-
-interface BackgroundDragState {
-  kind: "move" | "scale";
-  origin: { x: number; y: number };
-  backgroundImage: EditorBackgroundImage;
 }
 
 interface CurveDragState {
@@ -26,7 +19,6 @@ interface CurveDragState {
 export function useMapCanvasController() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<PanState | null>(null);
-  const backgroundDragRef = useRef<BackgroundDragState | null>(null);
   const curveDragRef = useRef<CurveDragState | null>(null);
   const map = useEditorStore((state) => state.map);
   const workspaceMode = useEditorStore((state) => state.workspaceMode);
@@ -49,9 +41,19 @@ export function useMapCanvasController() {
   const dragNodeTo = useEditorStore((state) => state.dragNodeTo);
   const endDragNode = useEditorStore((state) => state.endDragNode);
   const setViewport = useEditorStore((state) => state.setViewport);
-  const updateBackgroundImage = useEditorStore((state) => state.updateBackgroundImage);
   const updateSelectedEdgeCurveHandle = useEditorStore((state) => state.updateSelectedEdgeCurveHandle);
-  const fitBounds = useMemo(() => getBounds(map, backgroundImage), [map, backgroundImage]);
+  // The viewBox aspect must match the SVG's pixel aspect so the floor renders
+  // square-on-square without stretching; fall back to the floor aspect before the
+  // element is mounted (first render) or measurable.
+  function viewportAspect(): number {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (rect && rect.width > 0 && rect.height > 0) return rect.width / rect.height;
+    return map.canvas.width / map.canvas.height;
+  }
+  const fitBounds = useMemo(
+    () => fitViewportToContent(map, map.canvas.width / map.canvas.height),
+    [map],
+  );
   const viewport = viewportState || fitBounds;
   const trackingRouteNodeIds = useMemo(() => {
     const activeStatus = Object.values(orderStatuses).find((status) => {
@@ -64,7 +66,7 @@ export function useMapCanvasController() {
   const visibleRouteNodeIds = workspaceMode === "tracking" ? trackingRouteNodeIds : workspaceMode === "routes" ? routeNodeIds : [];
 
   function zoomAt(anchor: { x: number; y: number }, scale: number) {
-    setViewport(zoomViewport(viewport, anchor, scale));
+    setViewport(zoomViewport(viewport, anchor, scale, map.canvas));
   }
 
   function zoomAroundCenter(scale: number) {
@@ -81,7 +83,7 @@ export function useMapCanvasController() {
       if (!svgRef.current) return;
       event.preventDefault();
       const anchor = screenToWorldRaw(svgRef.current, event.clientX, event.clientY);
-      setViewport(zoomViewport(viewport, anchor, wheelZoomScale(event)));
+      setViewport(zoomViewport(viewport, anchor, wheelZoomScale(event), map.canvas));
     };
   });
   useEffect(() => {
@@ -96,6 +98,8 @@ export function useMapCanvasController() {
     svgRef,
     map,
     bounds: viewport,
+    canvas: map.canvas,
+    gridStep: gridStepForViewport(viewport.width),
     workspaceMode,
     tool,
     backgroundImage,
@@ -144,31 +148,6 @@ export function useMapCanvasController() {
         updateSelectedEdgeCurveHandle(point.x, point.y);
         return;
       }
-      if (backgroundDragRef.current) {
-        const point = screenToWorldRaw(svgRef.current, event.clientX, event.clientY);
-        const drag = backgroundDragRef.current;
-        if (drag.kind === "move") {
-          updateBackgroundImage((backgroundImage) => ({
-            ...backgroundImage,
-            x: drag.backgroundImage.x + point.x - drag.origin.x,
-            y: drag.backgroundImage.y + point.y - drag.origin.y,
-          }));
-        } else {
-          const scale = Math.max(
-            0.05,
-            Math.max(
-              (point.x - drag.backgroundImage.x) / drag.backgroundImage.width,
-              (point.y - drag.backgroundImage.y) / drag.backgroundImage.height
-            )
-          );
-          updateBackgroundImage((backgroundImage) => ({
-            ...backgroundImage,
-            width: drag.backgroundImage.width * scale,
-            height: drag.backgroundImage.height * scale,
-          }));
-        }
-        return;
-      }
       const point = screenToWorld(svgRef.current, event.clientX, event.clientY);
       dragNodeTo(point.x, point.y);
       if (panRef.current) {
@@ -178,7 +157,7 @@ export function useMapCanvasController() {
         if (Math.abs(event.clientX - panRef.current.clientX) > 2 || Math.abs(event.clientY - panRef.current.clientY) > 2) {
           panRef.current.moved = true;
         }
-        setViewport(panViewport(panRef.current.viewport, deltaX, deltaY));
+        setViewport(panViewport(panRef.current.viewport, deltaX, deltaY, map.canvas));
       }
     },
     onCanvasPointerUp: (event: PointerEvent<SVGSVGElement>) => {
@@ -186,32 +165,11 @@ export function useMapCanvasController() {
         clearSelection();
       }
       panRef.current = null;
-      backgroundDragRef.current = null;
       curveDragRef.current = null;
       endDragNode();
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-    },
-    onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => {
-      event.stopPropagation();
-      if (workspaceMode !== "map" || tool !== "background" || backgroundImage.locked || !svgRef.current) return;
-      backgroundDragRef.current = {
-        kind: "move",
-        origin: screenToWorldRaw(svgRef.current, event.clientX, event.clientY),
-        backgroundImage,
-      };
-      svgRef.current.setPointerCapture(event.pointerId);
-    },
-    onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => {
-      event.stopPropagation();
-      if (workspaceMode !== "map" || tool !== "background" || backgroundImage.locked || !svgRef.current) return;
-      backgroundDragRef.current = {
-        kind: "scale",
-        origin: screenToWorldRaw(svgRef.current, event.clientX, event.clientY),
-        backgroundImage,
-      };
-      svgRef.current.setPointerCapture(event.pointerId);
     },
     onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => {
       event.stopPropagation();
@@ -222,6 +180,8 @@ export function useMapCanvasController() {
     },
     onZoomIn: () => zoomAroundCenter(0.85),
     onZoomOut: () => zoomAroundCenter(1.18),
-    onResetView: () => setViewport(null),
+    // Reset to the default view (fit-to-content for a populated map, empty-floor
+    // center otherwise), measured against the real SVG aspect and floor-clamped.
+    onResetView: () => setViewport(fitViewportToContent(map, viewportAspect())),
   };
 }

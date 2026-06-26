@@ -4,17 +4,30 @@ import {
   appendEdge,
   appendNode,
   applyMapOps,
+  backfillCanvas,
   buildVdaOrder,
+  clampViewportToFloor,
   copyBifurcatedEdgeProperties,
   createQuadraticBezierTrajectory,
   createDemoMap,
   createEmptyMap,
+  DEFAULT_CANVAS_SIZE,
   edgesShareQuadraticHandle,
+  emptyViewport,
   findEdgeById,
+  fitViewportToContent,
+  floorBounds,
+  floorSizeForImageAspect,
   getQuadraticBezierPoseAtDistance,
+  gridStepForViewport,
+  MIN_VIEWPORT_WIDTH,
+  recalibrateCanvas,
+  recenterMapOnFloor,
   exportLifDocument,
   getActionNodeIds,
   getStationNodeIds,
+  getSupportNodeIds,
+  nodeHasLabel,
   importLifDocument,
   nodeIdEditPolicy,
   isSupportedQuadraticBezier,
@@ -32,6 +45,7 @@ import {
   validateMap,
   validateRoute,
   validateRouteDocument,
+  type CanvasSize,
   type MapDocument,
   type MapEdge,
   type MapNode,
@@ -259,6 +273,35 @@ describe("LIF import/export", () => {
     expect(imported.edges).toHaveLength(1);
   });
 
+  it("round-trips a blank-label support node so it survives export and re-import", () => {
+    const map: MapDocument = {
+      ...createEmptyMap("Support Round-trip"),
+      nodes: [
+        { id: "n1", label: "", x: 1, y: 2 },
+        { id: "n2", label: "Dock", x: 3, y: 4 },
+      ],
+      edges: [{
+        id: "n1-n2",
+        label: "n1 -> n2",
+        from: "n1",
+        to: "n2",
+        orientationType: "TANGENTIAL",
+        rotationAllowed: true,
+        trajectory: null,
+      }],
+    };
+
+    const exported = exportLifDocument(map);
+    // Export stays valid through the vdma-lif parser even with a blank nodeName.
+    expect(LIFParser.fromJson(JSON.stringify(exported))).not.toBeNull();
+
+    const imported = importLifDocument(exported);
+    const reimported = imported.nodes.find((node) => node.id === "n1");
+    expect(reimported?.label).toBe("");
+    // It stays a support node (no actions, no label) after the round-trip.
+    expect([...getSupportNodeIds(imported)]).toEqual(["n1"]);
+  });
+
   it("rejects documents that do not match the vdma-lif model", () => {
     expect(() => importLifDocument({ layouts: [] })).toThrow(/Invalid LIF document/);
   });
@@ -294,8 +337,9 @@ describe("VDA order generation", () => {
     }, "order-test");
 
     expect(order.edges[0]?.trajectory?.degree).toBe(2);
-    expect(order.edges[0]?.trajectory?.controlPoints[0]).toMatchObject({ x: 0, y: 0 });
-    expect(order.edges[0]?.trajectory?.controlPoints[2]).toMatchObject({ x: 5, y: 0 });
+    // Endpoints sync to the demo nodes, now floor-centered (dock-a, corr-1).
+    expect(order.edges[0]?.trajectory?.controlPoints[0]).toMatchObject({ x: 92.5, y: 95 });
+    expect(order.edges[0]?.trajectory?.controlPoints[2]).toMatchObject({ x: 97.5, y: 95 });
   });
 });
 
@@ -416,6 +460,8 @@ describe("edge bifurcation / trajectory geometry", () => {
     expect(split).not.toBeNull();
     // Midpoint of {0,0}-{4,2}; first free n-id with two existing nodes is n-3.
     expect(split!.node).toMatchObject({ id: "n-3", x: 2, y: 1 });
+    // The inserted midpoint is a support node: it carries a blank label.
+    expect(split!.node.label).toBe("");
     const [first, second] = split!.edges;
     expect(`${first.from}->${first.to}`).toBe("a->n-3");
     expect(`${second.from}->${second.to}`).toBe("n-3->b");
@@ -709,6 +755,59 @@ describe("station-node selector", () => {
   });
 });
 
+describe("support-node selector", () => {
+  function node(id: string, label: string, unsupported?: MapNode["unsupported"]): MapNode {
+    return { id, label, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
+  }
+
+  function mapWith(nodes: MapNode[], unsupported?: MapDocument["unsupported"]): MapDocument {
+    return {
+      ...createEmptyMap("Support"),
+      nodes,
+      edges: [],
+      ...(unsupported ? { unsupported } : {}),
+    };
+  }
+
+  it("includes a node with no label and no actions", () => {
+    expect([...getSupportNodeIds(mapWith([node("plain", "")]))]).toEqual(["plain"]);
+  });
+
+  it("excludes a node with a non-empty label even when it has no actions", () => {
+    expect(getSupportNodeIds(mapWith([node("labeled", "Dock A")])).size).toBe(0);
+  });
+
+  it("excludes a node with actions even when its label is blank", () => {
+    const map = mapWith([
+      node("act", "", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "pick" }] }] }),
+    ]);
+    expect(getSupportNodeIds(map).size).toBe(0);
+  });
+
+  it("excludes a station-referenced node even when its label is blank", () => {
+    const map = mapWith(
+      [node("station-node", "")],
+      { stations: [{ stationId: "s1", interactionNodeIds: ["station-node"] }] }
+    );
+    expect(getSupportNodeIds(map).size).toBe(0);
+  });
+});
+
+describe("nodeHasLabel", () => {
+  function node(label: string): MapNode {
+    return { id: "n", label, x: 0, y: 0 };
+  }
+
+  it("is false for an empty or whitespace-only label", () => {
+    expect(nodeHasLabel(node(""))).toBe(false);
+    expect(nodeHasLabel(node("   "))).toBe(false);
+  });
+
+  it("is true for a non-empty label", () => {
+    expect(nodeHasLabel(node("Dock A"))).toBe(true);
+  });
+});
+
 describe("node id edit policy", () => {
   it("is editable when nothing references the node", () => {
     expect(
@@ -734,3 +833,290 @@ describe("node id edit policy", () => {
     ).toBe("locked");
   });
 });
+
+describe("finite floor geometry", () => {
+  const canvas = { width: 200, height: 200 };
+
+  function floorMap(nodes: MapNode[], edges: MapEdge[] = []): MapDocument {
+    return { ...createEmptyMap("Floor"), canvas, nodes, edges };
+  }
+
+  function node(id: string, x: number, y: number): MapNode {
+    return { id, label: id, x, y };
+  }
+
+  it("defaults new maps to a 200x200 m floor", () => {
+    expect(createEmptyMap().canvas).toEqual(DEFAULT_CANVAS_SIZE);
+    expect(createDemoMap().canvas).toEqual({ width: 200, height: 200 });
+  });
+
+  it("centers the demo grid bounding box on the floor", () => {
+    const demo = createDemoMap();
+    const xs = demo.nodes.map((item) => item.x);
+    const ys = demo.nodes.map((item) => item.y);
+    expect((Math.min(...xs) + Math.max(...xs)) / 2).toBe(100);
+    expect((Math.min(...ys) + Math.max(...ys)) / 2).toBe(100);
+    // Every demo node is on the floor and the map validates with its canvas.
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(0);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(demo.canvas.width);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(demo.canvas.height);
+    expect(validateMap(demo)).toEqual([]);
+  });
+
+  it("derives the floor rectangle from the canvas size", () => {
+    expect(floorBounds({ width: 120, height: 80 })).toEqual({ x: 0, y: 0, width: 120, height: 80 });
+  });
+
+  it("reshapes the floor to a background image aspect, keeping width", () => {
+    // A 2:1 image keeps width and halves height; a 1:2 image doubles it.
+    expect(floorSizeForImageAspect(200, 2)).toEqual({ width: 200, height: 100 });
+    expect(floorSizeForImageAspect(200, 0.5)).toEqual({ width: 200, height: 400 });
+    // A square image yields a square floor.
+    expect(floorSizeForImageAspect(200, 1)).toEqual({ width: 200, height: 200 });
+    // Degenerate aspects (zero / non-finite) fall back to a square floor.
+    expect(floorSizeForImageAspect(200, 0)).toEqual({ width: 200, height: 200 });
+    expect(floorSizeForImageAspect(200, Number.NaN)).toEqual({ width: 200, height: 200 });
+  });
+
+  it("clamps zoom-in to the minimum viewport width, preserving aspect", () => {
+    const clamped = clampViewportToFloor({ x: 100, y: 100, width: 1, height: 0.5 }, canvas);
+    expect(clamped.width).toBe(MIN_VIEWPORT_WIDTH);
+    expect(clamped.width / clamped.height).toBeCloseTo(2, 10);
+  });
+
+  it("zoom-out stops at the whole floor, centered with a breathing margin", () => {
+    // A square viewport on a square floor zoomed way out: width caps just past the
+    // floor (the margin) and the floor stays centered.
+    const clamped = clampViewportToFloor({ x: -500, y: -500, width: 5000, height: 5000 }, canvas);
+    expect(clamped.width).toBeGreaterThan(200);
+    expect(clamped.width).toBeLessThan(240);
+    // Floor is fully visible on both axes -> centered, so it overhangs equally.
+    expect(clamped.x).toBeCloseTo((200 - clamped.width) / 2, 10);
+    expect(clamped.y).toBeCloseTo((200 - clamped.height) / 2, 10);
+  });
+
+  it("hard-clamps pan so the viewport never shows past a floor edge", () => {
+    const span = { width: 20, height: 20 };
+    // Pushed past the right/bottom edges -> pulled back so it ends flush at 200.
+    const past = clampViewportToFloor({ x: 500, y: 500, ...span }, canvas);
+    expect(past.x).toBe(180);
+    expect(past.y).toBe(180);
+    // Pushed past the top/left -> pinned to the origin.
+    const before = clampViewportToFloor({ x: -50, y: -50, ...span }, canvas);
+    expect(before.x).toBe(0);
+    expect(before.y).toBe(0);
+  });
+
+  it("centers a fully-visible axis instead of letting it pan", () => {
+    // Viewport wider than the floor on x but shorter on y.
+    const clamped = clampViewportToFloor({ x: 70, y: 90, width: 400, height: 10 }, canvas);
+    // x axis is letterboxed -> centered; y axis still pans within the floor.
+    expect(clamped.x).toBeLessThan(0);
+    expect(clamped.x).toBeCloseTo((200 - clamped.width) / 2, 10);
+    expect(clamped.y).toBe(90);
+  });
+
+  it("fits to content (bbox + padding), clamped to the floor", () => {
+    const map = floorMap([node("a", 100, 100), node("b", 110, 104)]);
+    const fit = fitViewportToContent(map, 2);
+    // Content center (105, 102) is preserved; the box covers the nodes + padding.
+    expect(fit.x + fit.width / 2).toBeCloseTo(105, 6);
+    expect(fit.y + fit.height / 2).toBeCloseTo(102, 6);
+    expect(fit.width).toBeGreaterThanOrEqual(14);
+    expect(fit.x).toBeGreaterThanOrEqual(0);
+  });
+
+  it("opens an empty map ~20 m wide centered on the floor center", () => {
+    const fit = fitViewportToContent(floorMap([]), 1);
+    expect(fit.width).toBe(20);
+    expect(fit.x + fit.width / 2).toBe(100);
+    expect(fit.y + fit.height / 2).toBe(100);
+    expect(emptyViewport(canvas, 1)).toEqual(fit);
+  });
+
+  it("recenters a corner map onto the floor center, preserving every dx/dy", () => {
+    const map = floorMap(
+      [node("a", -10, -5), node("b", 0, 5)],
+      [{
+        id: "a-b",
+        label: "a -> b",
+        from: "a",
+        to: "b",
+        orientationType: "TANGENTIAL",
+        rotationAllowed: true,
+        trajectory: createQuadraticBezierTrajectory({ x: -10, y: -5 }, { x: 0, y: 5 }, { x: -5, y: 0 }),
+      }],
+    );
+
+    const moved = recenterMapOnFloor(map);
+    // bbox (-10,-5)->(0,5), center (-5,0) -> floor center (100,100): offset (+105,+100).
+    expect(moved.nodes.map((item) => [item.x, item.y])).toEqual([[95, 95], [105, 105]]);
+    expect(moved.edges[0]!.trajectory!.controlPoints.map((p) => [p.x, p.y])).toEqual([[95, 95], [100, 100], [105, 105]]);
+    // bbox center now sits exactly on the floor center.
+    const xs = moved.nodes.map((item) => item.x);
+    const ys = moved.nodes.map((item) => item.y);
+    expect((Math.min(...xs) + Math.max(...xs)) / 2).toBe(100);
+    expect((Math.min(...ys) + Math.max(...ys)) / 2).toBe(100);
+
+    // The translation preserves every dx/dy (and thus atan2 heading) of the edge.
+    expect(headings(moved)).toEqual(headings(map));
+  });
+
+  it("preserves a trajectory tangent heading across the recenter translation", () => {
+    // A curved edge whose control points sit off the floor: every control point
+    // shifts by the same vector, so a sampled tangent's atan2 heading is invariant.
+    const trajectory = createQuadraticBezierTrajectory({ x: -10, y: -5 }, { x: 0, y: 5 }, { x: -8, y: 4 });
+    const map = floorMap(
+      [node("a", -10, -5), node("b", 0, 5)],
+      [{
+        id: "a-b",
+        label: "a -> b",
+        from: "a",
+        to: "b",
+        orientationType: "TANGENTIAL",
+        rotationAllowed: true,
+        trajectory,
+      }],
+    );
+
+    const tangentBefore = getQuadraticBezierPoseAtDistance(trajectory, 3).theta;
+    const moved = recenterMapOnFloor(map);
+    const tangentAfter = getQuadraticBezierPoseAtDistance(moved.edges[0]!.trajectory!, 3).theta;
+    expect(tangentAfter).toBeCloseTo(tangentBefore, 12);
+  });
+
+  it("leaves an already-centered map untouched (same reference)", () => {
+    const map = floorMap([node("a", 80, 80), node("b", 120, 120)]);
+    expect(recenterMapOnFloor(map)).toBe(map);
+  });
+
+  it("backfills the default canvas and recenters a legacy corner map on load", () => {
+    // A legacy demo authored at corner coords (0,0)->(15,10) with no canvas field.
+    const legacy = {
+      ...createEmptyMap("Legacy"),
+      nodes: [node("a", 0, 0), node("b", 15, 10)],
+    };
+    delete (legacy as { canvas?: unknown }).canvas;
+
+    const restored = backfillCanvas(legacy as MapDocument);
+    expect(restored.canvas).toEqual(DEFAULT_CANVAS_SIZE);
+    // bbox 15x10 recenters to (92.5,95)->(107.5,105), center (100,100).
+    expect(restored.nodes.map((item) => [item.x, item.y])).toEqual([[92.5, 95], [107.5, 105]]);
+    expect(validateMap(restored)).toEqual([]);
+  });
+
+  it("only backfills the canvas on a legacy empty map (nothing to center)", () => {
+    const legacy = { ...createEmptyMap("Empty"), nodes: [] };
+    delete (legacy as { canvas?: unknown }).canvas;
+    const restored = backfillCanvas(legacy as MapDocument);
+    expect(restored.canvas).toEqual(DEFAULT_CANVAS_SIZE);
+    expect(restored.nodes).toEqual([]);
+  });
+
+  it("leaves a map that already has a canvas untouched on load (no re-center)", () => {
+    // A map deliberately placed in the corner but already migrated (has canvas):
+    // backfill must NOT yank it back to center on every reload.
+    const map = floorMap([node("a", 0, 0), node("b", 15, 10)]);
+    expect(backfillCanvas(map)).toBe(map);
+  });
+
+  it("rejects a non-positive canvas in validation", () => {
+    const bad = floorMap([node("a", 1, 1)]);
+    bad.canvas = { width: 0, height: 200 };
+    expect(validateMap(bad).map((issue) => issue.code)).toContain("map.canvas.invalid");
+  });
+
+  it("steps the grid 1 -> 5 -> 10 -> 25 m as the viewport widens", () => {
+    expect(gridStepForViewport(3)).toBe(1);
+    expect(gridStepForViewport(12)).toBe(1);
+    expect(gridStepForViewport(20)).toBe(5);
+    expect(gridStepForViewport(80)).toBe(10);
+    expect(gridStepForViewport(180)).toBe(25);
+  });
+});
+
+describe("recalibrate canvas to real-world meters", () => {
+  function node(id: string, x: number, y: number): MapNode {
+    return { id, label: id, x, y };
+  }
+
+  function calibMap(canvas: CanvasSize, nodes: MapNode[], edges: MapEdge[] = []): MapDocument {
+    return { ...createEmptyMap("Calib"), canvas, nodes, edges };
+  }
+
+  it("scales node coordinates proportionally to a uniform (aspect-locked) width change", () => {
+    // 200 -> 100 on both axes: a node at (100,100) (50% across, 50% down) stays at 50%.
+    const map = calibMap({ width: 200, height: 200 }, [node("a", 100, 100), node("b", 50, 150)]);
+    const next = recalibrateCanvas(map, { width: 100, height: 100 });
+    expect(next.canvas).toEqual({ width: 100, height: 100 });
+    expect(next.nodes.map((item) => [item.x, item.y])).toEqual([[50, 50], [25, 75]]);
+  });
+
+  it("rescales edge trajectory control points alongside nodes", () => {
+    const map = calibMap(
+      { width: 200, height: 200 },
+      [node("a", 0, 0), node("b", 100, 100)],
+      [{
+        id: "a-b",
+        label: "a -> b",
+        from: "a",
+        to: "b",
+        orientationType: "TANGENTIAL",
+        rotationAllowed: true,
+        trajectory: createQuadraticBezierTrajectory({ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 40, y: 60 }),
+      }],
+    );
+    const next = recalibrateCanvas(map, { width: 100, height: 100 });
+    expect(next.edges[0]!.trajectory!.controlPoints.map((p) => [p.x, p.y])).toEqual([
+      [0, 0],
+      [20, 30],
+      [50, 50],
+    ]);
+  });
+
+  it("scales y but not x for an independent (non-uniform) height change", () => {
+    const map = calibMap({ width: 200, height: 200 }, [node("a", 80, 100)]);
+    const next = recalibrateCanvas(map, { width: 200, height: 400 });
+    expect(next.canvas).toEqual({ width: 200, height: 400 });
+    expect(next.nodes.map((item) => [item.x, item.y])).toEqual([[80, 200]]);
+  });
+
+  it("anchors content to plan-fractions across recalibration", () => {
+    // A node at fraction (0.3, 0.7) of the floor stays at that fraction afterwards.
+    const map = calibMap({ width: 150, height: 90 }, [node("a", 0.3 * 150, 0.7 * 90)]);
+    const next = recalibrateCanvas(map, { width: 42.5, height: 17 });
+    const out = next.nodes[0]!;
+    expect(out.x / next.canvas.width).toBeCloseTo(0.3, 12);
+    expect(out.y / next.canvas.height).toBeCloseTo(0.7, 12);
+  });
+
+  it("handles an empty map (only the canvas changes)", () => {
+    const map = calibMap({ width: 200, height: 200 }, []);
+    const next = recalibrateCanvas(map, { width: 30, height: 20 });
+    expect(next.canvas).toEqual({ width: 30, height: 20 });
+    expect(next.nodes).toEqual([]);
+  });
+
+  it("handles a single node and leaves the origin fixed", () => {
+    const map = calibMap({ width: 200, height: 200 }, [node("origin", 0, 0), node("a", 20, 20)]);
+    const next = recalibrateCanvas(map, { width: 400, height: 400 });
+    expect(next.nodes.map((item) => [item.x, item.y])).toEqual([[0, 0], [40, 40]]);
+  });
+
+  it("is immutable and never mutates the input map", () => {
+    const map = calibMap({ width: 200, height: 200 }, [node("a", 10, 10)]);
+    const next = recalibrateCanvas(map, { width: 100, height: 100 });
+    expect(map.canvas).toEqual({ width: 200, height: 200 });
+    expect(map.nodes[0]).toEqual({ id: "a", label: "a", x: 10, y: 10 });
+    expect(next).not.toBe(map);
+  });
+});
+
+function headings(map: MapDocument): number[] {
+  return map.edges.map((edge) => {
+    const from = map.nodes.find((item) => item.id === edge.from)!;
+    const to = map.nodes.find((item) => item.id === edge.to)!;
+    return Math.atan2(to.y - from.y, to.x - from.x);
+  });
+}

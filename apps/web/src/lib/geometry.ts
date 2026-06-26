@@ -1,21 +1,25 @@
-import {
-  type MapDocument,
-} from "@agv/core";
+import { clampViewportToFloor, type CanvasSize, } from "@agv/core";
 
 export const GRID = 1;
 
-// Node rendering radii, in world units. Action/station nodes stay hefty; pure
-// path-support nodes shrink to a small dot that blends into the path. Both tiers
-// keep an invisible hit-target so a tiny dot is still easy to grab.
+// Node rendering radii, in world units (real meters) — a node keeps the same
+// physical footprint on the floor at any zoom. Action/station nodes stay hefty;
+// pure path-support nodes render as a small dot that blends into the path. A
+// support node's pointer target is its own visible dot — no enlarged hit area —
+// so a drag only catches it within the dot you can actually see.
 export const ACTION_NODE_RADIUS = 0.28;
-export const SUPPORT_NODE_RADIUS = 0.08;
-export const SUPPORT_NODE_HIT_RADIUS = 0.2;
+export const SUPPORT_NODE_RADIUS = 0.06;
 
-// Support dots are floored to this fraction of the viewport width so they never
-// shrink away when zoomed out. The pixel size of a world-unit radius is
-// proportional to (radius / viewportWidth), so flooring as a fraction of the
-// viewport keeps a roughly constant minimum on-screen size at any zoom level.
-const SUPPORT_NODE_MIN_VIEWPORT_FRACTION = 0.006;
+// An incoming edge to an action node stops this far short of the node center so
+// its arrowhead tip rests snug against the node ring. Without this the tip lands
+// at the center, where the node — and any overlapping reverse-twin edge drawn on
+// top — swallow the head. Tuned just inside ACTION_NODE_RADIUS so the tip meets
+// the ring with no gap; larger values float the head off the node.
+export const ARROW_NODE_STANDOFF = 0.15;
+
+// Bézier curve-drag handle: twice a support node so it reads as a grabbable knob
+// without dominating the canvas.
+export const CURVE_HANDLE_RADIUS = SUPPORT_NODE_RADIUS;
 
 // Node placement snaps to this lattice (in world units / meters). This is finer
 // than the drawn GRID on purpose: the visual grid stays at 1 m for legibility while
@@ -23,9 +27,6 @@ const SUPPORT_NODE_MIN_VIEWPORT_FRACTION = 0.006;
 // via integers (Math.round(v * SNAP_PER_UNIT) / SNAP_PER_UNIT) and avoid the float
 // dust that Math.round(v / 0.1) * 0.1 reintroduces.
 const SNAP_PER_UNIT = 10;
-
-export const MIN_VIEWPORT_WIDTH = 3;
-export const MAX_VIEWPORT_WIDTH = 80;
 
 // Wheel-zoom tuning. Wheel events report their delta in pixels, lines, or pages
 // (deltaMode); we normalize everything to pixels so a mouse notch and a trackpad
@@ -41,87 +42,6 @@ export interface CanvasBounds {
   y: number;
   width: number;
   height: number;
-}
-
-interface BackgroundBoundsSource {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export function getBounds(map: MapDocument, backgroundImage: BackgroundBoundsSource | null = null): CanvasBounds {
-  const nodeBounds = getNodeExtents(map);
-  const backgroundBounds = backgroundImage
-    ? {
-      minX: backgroundImage.x,
-      maxX: backgroundImage.x + backgroundImage.width,
-      minY: backgroundImage.y,
-      maxY: backgroundImage.y + backgroundImage.height,
-    }
-    : null;
-  const extents = combineExtents(nodeBounds, backgroundBounds);
-  return extents ? padExtents(extents) : defaultBounds();
-}
-
-export function getNodeBounds(map: MapDocument): CanvasBounds {
-  const extents = getNodeExtents(map);
-  return extents ? padExtents(extents) : defaultBounds();
-}
-
-export function fitRectToBounds(bounds: CanvasBounds, naturalWidth: number, naturalHeight: number): CanvasBounds {
-  const aspect = naturalWidth > 0 && naturalHeight > 0 ? naturalWidth / naturalHeight : 1;
-  const boundsAspect = bounds.width / bounds.height;
-  const width = aspect >= boundsAspect ? bounds.width : bounds.height * aspect;
-  const height = aspect >= boundsAspect ? bounds.width / aspect : bounds.height;
-  return {
-    x: bounds.x + (bounds.width - width) / 2,
-    y: bounds.y + (bounds.height - height) / 2,
-    width,
-    height,
-  };
-}
-
-function defaultBounds(): CanvasBounds {
-  return { x: -2, y: -2, width: 20, height: 14 };
-}
-
-function getNodeExtents(map: MapDocument) {
-  if (map.nodes.length === 0) return null;
-  const xs = map.nodes.map((node) => node.x);
-  const ys = map.nodes.map((node) => node.y);
-  return {
-    minX: Math.min(...xs),
-    maxX: Math.max(...xs),
-    minY: Math.min(...ys),
-    maxY: Math.max(...ys),
-  };
-}
-
-type Extents = NonNullable<ReturnType<typeof getNodeExtents>>;
-
-function combineExtents(first: Extents | null, second: Extents | null) {
-  if (!first) return second;
-  if (!second) return first;
-  return {
-    minX: Math.min(first.minX, second.minX),
-    maxX: Math.max(first.maxX, second.maxX),
-    minY: Math.min(first.minY, second.minY),
-    maxY: Math.max(first.maxY, second.maxY),
-  };
-}
-
-function padExtents(extents: Extents): CanvasBounds {
-  const minX = extents.minX;
-  const maxX = extents.maxX;
-  const minY = extents.minY;
-  const maxY = extents.maxY;
-  return {
-    x: minX - 2,
-    y: minY - 2,
-    width: Math.max(maxX - minX + 4, 12),
-    height: Math.max(maxY - minY + 4, 8),
-  };
 }
 
 export function snap(value: number) {
@@ -141,18 +61,28 @@ export function screenToWorldRaw(svg: SVGSVGElement, clientX: number, clientY: n
   return { x: transformed.x, y: transformed.y };
 }
 
-export function zoomViewport(viewport: CanvasBounds, anchor: { x: number; y: number }, scale: number): CanvasBounds {
-  const nextWidth = Math.min(MAX_VIEWPORT_WIDTH, Math.max(MIN_VIEWPORT_WIDTH, viewport.width * scale));
-  const effectiveScale = nextWidth / viewport.width;
-  const nextHeight = viewport.height * effectiveScale;
+// Zoom around an anchor, then clamp to the finite floor: the core clamp caps the
+// width into [min, whole-floor], so a zoom past either limit settles at it instead
+// of scrolling into the void.
+export function zoomViewport(
+  viewport: CanvasBounds,
+  anchor: { x: number; y: number },
+  scale: number,
+  canvas: CanvasSize,
+): CanvasBounds {
+  const nextWidth = viewport.width * scale;
+  const nextHeight = viewport.height * scale;
   const anchorXRatio = (anchor.x - viewport.x) / viewport.width;
   const anchorYRatio = (anchor.y - viewport.y) / viewport.height;
-  return {
-    x: anchor.x - anchorXRatio * nextWidth,
-    y: anchor.y - anchorYRatio * nextHeight,
-    width: nextWidth,
-    height: nextHeight,
-  };
+  return clampViewportToFloor(
+    {
+      x: anchor.x - anchorXRatio * nextWidth,
+      y: anchor.y - anchorYRatio * nextHeight,
+      width: nextWidth,
+      height: nextHeight,
+    },
+    canvas,
+  );
 }
 
 export function wheelZoomScale(event: { deltaY: number; deltaMode: number }): number {
@@ -165,21 +95,42 @@ export function wheelZoomScale(event: { deltaY: number; deltaMode: number }): nu
   return Math.exp(clamped * WHEEL_ZOOM_SENSITIVITY);
 }
 
-export function panViewport(viewport: CanvasBounds, deltaX: number, deltaY: number): CanvasBounds {
-  return {
-    ...viewport,
-    x: viewport.x + deltaX,
-    y: viewport.y + deltaY,
-  };
+// Pan, then hard-clamp to the floor so the viewport never shows past an edge and a
+// fully-visible axis stays centered.
+export function panViewport(
+  viewport: CanvasBounds,
+  deltaX: number,
+  deltaY: number,
+  canvas: CanvasSize,
+): CanvasBounds {
+  return clampViewportToFloor(
+    { ...viewport, x: viewport.x + deltaX, y: viewport.y + deltaY },
+    canvas,
+  );
 }
 
-// Visible radius for a node's main circle. Action/station nodes keep their hefty
-// look; support nodes render as a small dot, floored against the viewport width
-// so they stay visible (never vanish) when zoomed out.
-export function nodeRenderRadius(isAction: boolean, viewportWidth: number): number {
-  if (isAction) return ACTION_NODE_RADIUS;
-  const floor = viewportWidth * SUPPORT_NODE_MIN_VIEWPORT_FRACTION;
-  return Math.max(SUPPORT_NODE_RADIUS, floor);
+// Visible radius for a node's main circle, in world units — a fixed real-world
+// size at any zoom. Full nodes (a label OR actions) keep their hefty look; pure
+// path-support nodes render as a small dot that doubles as their pointer target.
+export function nodeRenderRadius(isSupport: boolean): number {
+  return isSupport ? SUPPORT_NODE_RADIUS : ACTION_NODE_RADIUS;
+}
+
+// Pull an edge's terminal point back from the target node center by
+// ARROW_NODE_STANDOFF along the incoming direction, so an arrowhead tip lands
+// against the node ring rather than at its center. `approach` supplies that
+// direction — the source node for a straight edge, the curve handle for a
+// quadratic. Returns the target unchanged when the edge is too short to trim.
+export function arrowStandoffPoint(
+  approach: { x: number; y: number },
+  target: { x: number; y: number },
+): { x: number; y: number } {
+  const dx = target.x - approach.x;
+  const dy = target.y - approach.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= ARROW_NODE_STANDOFF) return target;
+  const ratio = (length - ARROW_NODE_STANDOFF) / length;
+  return { x: approach.x + dx * ratio, y: approach.y + dy * ratio };
 }
 
 export function routeContainsEdge(route: string[], from: string, to: string) {

@@ -1,9 +1,10 @@
 import type { PointerEvent, RefObject } from "react";
 import {
-  getActionNodeIds,
+  getSupportNodeIds,
+  nodeHasLabel,
   getQuadraticBezierHandle,
   isSupportedQuadraticBezier,
-  quadraticBezierSvgPath,
+  type CanvasSize,
   type MapDocument,
   type MapEdge,
   type MapNode,
@@ -12,13 +13,13 @@ import {
 } from "@agv/core";
 import { LocateFixed, Minus, Plus } from "lucide-react";
 import {
-  GRID,
-  SUPPORT_NODE_HIT_RADIUS,
+  CURVE_HANDLE_RADIUS,
+  arrowStandoffPoint,
   nodeRenderRadius,
   routeContainsEdge,
   type CanvasBounds,
 } from "../../lib/geometry";
-import type { EditorBackgroundImage, Selection, Tool, WorkspaceMode } from "../../types";
+import type { EditorBackgroundImage, Selection, WorkspaceMode } from "../../types";
 
 export interface CanvasAgv {
   serialNumber: string;
@@ -30,8 +31,9 @@ export interface MapCanvasViewProps {
   svgRef: RefObject<SVGSVGElement | null>;
   map: MapDocument;
   bounds: CanvasBounds;
+  canvas: CanvasSize;
+  gridStep: number;
   workspaceMode: WorkspaceMode;
-  tool: Tool;
   backgroundImage: EditorBackgroundImage | null;
   selection: Selection;
   edgeStartNodeId: string | null;
@@ -40,8 +42,6 @@ export interface MapCanvasViewProps {
   onCanvasPointerDown: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerUp: (event: PointerEvent<SVGSVGElement>) => void;
-  onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => void;
-  onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => void;
   onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => void;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
@@ -62,15 +62,10 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         onPointerUp={props.onCanvasPointerUp}
         onPointerLeave={props.onCanvasPointerUp}
       >
-        <CanvasDefs />
-        <BaseLayer bounds={props.bounds} />
-        <BackgroundImageLayer
-          backgroundImage={props.backgroundImage}
-          active={props.workspaceMode === "map" && props.tool === "background"}
-          onBackgroundPointerDown={props.onBackgroundPointerDown}
-          onBackgroundScalePointerDown={props.onBackgroundScalePointerDown}
-        />
-        <GridLayer bounds={props.bounds} />
+        <CanvasDefs canvas={props.canvas} gridStep={props.gridStep} />
+        <FloorLayer bounds={props.bounds} canvas={props.canvas} />
+        <BackgroundImageLayer backgroundImage={props.backgroundImage} canvas={props.canvas} />
+        <GridLayer canvas={props.canvas} />
         <EdgeLayer
           map={props.map}
           selection={props.selection}
@@ -86,7 +81,6 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         />
         <NodeLayer
           map={props.map}
-          bounds={props.bounds}
           selection={props.selection}
           edgeStartNodeId={props.edgeStartNodeId}
           routeNodeIds={props.routeNodeIds}
@@ -104,15 +98,28 @@ export function MapCanvasView(props: MapCanvasViewProps) {
   );
 }
 
-function CanvasDefs() {
+function CanvasDefs(props: { canvas: CanvasSize; gridStep: number }) {
+  // The grid line width scales with the step so coarser grids stay crisp; the
+  // pattern is sized to the adaptive step so the line count stays legible.
+  const strokeWidth = props.gridStep * 0.015;
   return (
     <defs>
-      <pattern id="grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
-        <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="#d7dee8" strokeWidth="0.015" />
+      <pattern id="grid" width={props.gridStep} height={props.gridStep} patternUnits="userSpaceOnUse">
+        <path
+          d={`M ${props.gridStep} 0 L 0 0 0 ${props.gridStep}`}
+          fill="none"
+          stroke="#d7dee8"
+          strokeWidth={strokeWidth}
+        />
       </pattern>
+      {/* Clip the grid to the floor so lines never spill onto the letterbox margin. */}
+      <clipPath id="floor-clip">
+        <rect x={0} y={0} width={props.canvas.width} height={props.canvas.height} />
+      </clipPath>
       {/* Slim directional cue, same slate as the .edge stroke so the head reads as part
-          of the line. refX=10 (the viewBox tip) lands the arrow tip at the path end —
-          the target node center — so the head sits at the node rather than overshooting. */}
+          of the line. refX=10 (the viewBox tip) lands the arrow tip at the path end;
+          EdgeLayer stops arrow-bearing edges a standoff short of the target center (see
+          arrowStandoffPoint) so the tip rests against the node ring. */}
       <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto">
         <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#475569" />
       </marker>
@@ -120,70 +127,48 @@ function CanvasDefs() {
   );
 }
 
-function BaseLayer(props: { bounds: CanvasBounds }) {
+// The out-of-bounds margin (letterbox) reads as muted gray; the finite floor sits
+// on top as a bordered white rectangle anchored at the origin.
+function FloorLayer(props: { bounds: CanvasBounds; canvas: CanvasSize }) {
   return (
     <g pointerEvents="none">
-      <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="#f8fafc" />
+      <rect
+        x={props.bounds.x}
+        y={props.bounds.y}
+        width={props.bounds.width}
+        height={props.bounds.height}
+        className="canvas-letterbox"
+      />
+      <rect x={0} y={0} width={props.canvas.width} height={props.canvas.height} className="canvas-floor" />
     </g>
   );
 }
 
-function GridLayer(props: { bounds: CanvasBounds }) {
+function GridLayer(props: { canvas: CanvasSize }) {
   return (
-    <g pointerEvents="none">
-      <rect x={props.bounds.x} y={props.bounds.y} width={props.bounds.width} height={props.bounds.height} fill="url(#grid)" />
+    <g pointerEvents="none" clipPath="url(#floor-clip)">
+      <rect x={0} y={0} width={props.canvas.width} height={props.canvas.height} fill="url(#grid)" />
     </g>
   );
 }
 
-function BackgroundImageLayer(props: {
-  backgroundImage: EditorBackgroundImage | null;
-  active: boolean;
-  onBackgroundPointerDown: (event: PointerEvent<SVGGElement>, backgroundImage: EditorBackgroundImage) => void;
-  onBackgroundScalePointerDown: (event: PointerEvent<SVGRectElement>, backgroundImage: EditorBackgroundImage) => void;
-}) {
+// The background image redefines the floor's shape (the floor adopts its aspect),
+// so it simply fills the floor edge-to-edge. With the floor matched to the image
+// aspect, default `preserveAspectRatio` fills exactly with no distortion.
+function BackgroundImageLayer(props: { backgroundImage: EditorBackgroundImage | null; canvas: CanvasSize }) {
   const backgroundImage = props.backgroundImage;
   if (!backgroundImage) return null;
-  const editable = props.active && !backgroundImage.locked;
-  const handleSize = Math.max(0.35, Math.min(backgroundImage.width, backgroundImage.height) * 0.035);
-
   return (
-    <g
-      className={editable ? "background-layer editable" : "background-layer"}
-      pointerEvents={editable ? "auto" : "none"}
-      onPointerDown={(event) => props.onBackgroundPointerDown(event, backgroundImage)}
-    >
+    <g className="background-layer" pointerEvents="none">
       <image
         href={backgroundImage.src}
-        x={backgroundImage.x}
-        y={backgroundImage.y}
-        width={backgroundImage.width}
-        height={backgroundImage.height}
+        x={0}
+        y={0}
+        width={props.canvas.width}
+        height={props.canvas.height}
         opacity={backgroundImage.opacity}
-        preserveAspectRatio="none"
         className="background-image"
       />
-      {props.active && (
-        <rect
-          x={backgroundImage.x}
-          y={backgroundImage.y}
-          width={backgroundImage.width}
-          height={backgroundImage.height}
-          className={backgroundImage.locked ? "background-frame locked" : "background-frame"}
-          pointerEvents="none"
-        />
-      )}
-      {editable && (
-        <rect
-          x={backgroundImage.x + backgroundImage.width - handleSize / 2}
-          y={backgroundImage.y + backgroundImage.height - handleSize / 2}
-          width={handleSize}
-          height={handleSize}
-          rx={handleSize * 0.18}
-          className="background-scale-handle"
-          onPointerDown={(event) => props.onBackgroundScalePointerDown(event, backgroundImage)}
-        />
-      )}
     </g>
   );
 }
@@ -197,6 +182,10 @@ function EdgeLayer(props: {
 }) {
   const edges = props.map.edges;
   const nodes = props.map.nodes;
+  // The arrowhead marks direction into a node that actually does something, so
+  // only edges arriving at a full node (a label OR actions) carry it; edges into
+  // a pure path-support node read as a plain segment of the route.
+  const supportNodeIds = getSupportNodeIds(props.map);
   return (
     <>
       {edges.map((edge) => {
@@ -205,24 +194,25 @@ function EdgeLayer(props: {
         if (!from || !to) return null;
         const active = props.selection?.type === "edge" && props.selection.id === edge.id;
         const routeActive = routeContainsEdge(props.routeNodeIds, edge.from, edge.to);
-        const className = edgeClass(active, routeActive, props.workspaceMode);
-        // Edges run as one continuous line from source node center to target node
-        // center: curved edges use the full Bézier path, straight edges draw raw
-        // from->to. Forward and reverse twins intentionally overlap on the same line.
-        const pathData = quadraticBezierSvgPath(edge.trajectory);
+        const showArrow = !supportNodeIds.has(edge.to);
+        const className = edgeClass(active, routeActive, props.workspaceMode, showArrow);
+        const handle = getQuadraticBezierHandle(edge.trajectory);
+        // Edges run from the source node center to the target: a curve uses its
+        // Bézier path, a straight edge draws raw from->to. When an arrowhead is
+        // shown (target is an action node) the edge stops a fixed standoff short
+        // of the node center via arrowStandoffPoint, so the tip rests against the
+        // ring instead of burying at the center; edges into a support node carry
+        // no arrow and still run to the center. The standoff direction is the
+        // curve handle for a quadratic, else the source node. Forward and reverse
+        // twins intentionally overlap; the arrowhead comes from the `.edge` CSS
+        // marker-end (suppressed by `.edge.no-arrow`).
+        const end = showArrow ? arrowStandoffPoint(handle ?? from, to) : to;
         return (
           <g key={edge.id} onPointerDown={(event) => props.onEdgePointerDown(event, edge.id)}>
-            {pathData ? (
-              <path d={pathData} className={className} markerEnd="url(#arrow)" fill="none" />
+            {handle ? (
+              <path d={`M ${from.x} ${from.y} Q ${handle.x} ${handle.y} ${end.x} ${end.y}`} className={className} fill="none" />
             ) : (
-              <line
-                x1={from.x}
-                y1={from.y}
-                x2={to.x}
-                y2={to.y}
-                className={className}
-                markerEnd="url(#arrow)"
-              />
+              <line x1={from.x} y1={from.y} x2={end.x} y2={end.y} className={className} />
             )}
           </g>
         );
@@ -248,7 +238,7 @@ function CurveHandleLayer(props: {
         className="curve-handle"
         cx={handle.x}
         cy={handle.y}
-        r="0.23"
+        r={CURVE_HANDLE_RADIUS}
         onPointerDown={(event) => props.onCurveHandlePointerDown(event, edge.id)}
       />
     </g>
@@ -275,28 +265,26 @@ function AgvOverlayLayer(props: { agvs: CanvasAgv[] }) {
 
 function NodeLayer(props: {
   map: MapDocument;
-  bounds: CanvasBounds;
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
 }) {
-  // Action/station nodes (derived from preserved LIF data) stay hefty; pure
-  // path-support nodes shrink to a small dot floored against the current zoom.
-  const actionNodeIds = getActionNodeIds(props.map);
+  // Full nodes (a label OR actions) stay hefty; pure path-support nodes — no
+  // label and no actions — render as a small dot. Both keep a fixed real-world size.
+  const supportNodeIds = getSupportNodeIds(props.map);
   return (
     <>
       {props.map.nodes.map((node) => {
-        const isAction = actionNodeIds.has(node.id);
-        const radius = nodeRenderRadius(isAction, props.bounds.width);
+        const isSupport = supportNodeIds.has(node.id);
+        const radius = nodeRenderRadius(isSupport);
         return (
           <g key={node.id} onPointerDown={(event) => props.onNodePointerDown(event, node)}>
-            {!isAction && (
-              <circle className="node-hit" cx={node.x} cy={node.y} r={SUPPORT_NODE_HIT_RADIUS} />
+            <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds, props.workspaceMode, isSupport)} cx={node.x} cy={node.y} r={radius} />
+            {nodeHasLabel(node) && (
+              <text className="node-label" x={node.x + 0.35} y={node.y - 0.35}>{node.label}</text>
             )}
-            <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds, props.workspaceMode)} cx={node.x} cy={node.y} r={radius} />
-            <text className="node-label" x={node.x + 0.35} y={node.y - 0.35}>{node.label || node.id}</text>
           </g>
         );
       })}
@@ -304,16 +292,18 @@ function NodeLayer(props: {
   );
 }
 
-function edgeClass(active: boolean, routeActive: boolean, workspaceMode: WorkspaceMode) {
+function edgeClass(active: boolean, routeActive: boolean, workspaceMode: WorkspaceMode, showArrow: boolean) {
   const classes = ["edge"];
   if (workspaceMode !== "map") classes.push("subtle");
   if (active) classes.push("active");
   if (routeActive) classes.push("route");
+  if (!showArrow) classes.push("no-arrow");
   return classes.join(" ");
 }
 
-function nodeClass(id: string, selection: Selection, edgeStart: string | null, route: string[], workspaceMode: WorkspaceMode) {
+function nodeClass(id: string, selection: Selection, edgeStart: string | null, route: string[], workspaceMode: WorkspaceMode, isSupport: boolean) {
   const classes = ["node"];
+  if (isSupport) classes.push("support");
   if (workspaceMode !== "map") classes.push("subtle");
   if (selection?.type === "node" && selection.id === id) classes.push("active");
   if (edgeStart === id) classes.push("edge-start");

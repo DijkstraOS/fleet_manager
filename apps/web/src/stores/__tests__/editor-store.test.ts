@@ -1,6 +1,5 @@
-import { createDemoMap, createEmptyMap, isSupportedQuadraticBezier } from "@agv/core";
+import { buildVdaOrder, createDemoMap, createEmptyMap, DEFAULT_CANVAS_SIZE, isSupportedQuadraticBezier } from "@agv/core";
 import { beforeEach, describe, expect, it } from "vitest";
-import { getBounds } from "../../lib/geometry";
 import { useEditorStore } from "../editor-store";
 
 describe("editor store", () => {
@@ -10,6 +9,7 @@ describe("editor store", () => {
       workspaceMode: "map",
       tool: "select",
       backgroundImage: null,
+      heightAspectLocked: true,
       selection: null,
       edgeStartNodeId: null,
       routeNodeIds: [],
@@ -62,7 +62,8 @@ describe("editor store", () => {
     expect(useEditorStore.getState().map.edges.map((edge) => `${edge.from}->${edge.to}`)).toEqual(["a->b", "b->a"]);
   });
 
-  it("attaches, fits, locks, and removes a background image", () => {
+  it("reshapes the floor to the image aspect on attach and reverts it on remove", () => {
+    const widthBefore = useEditorStore.getState().map.canvas.width;
     const store = useEditorStore.getState();
     store.attachBackgroundImage({
       src: "data:image/svg+xml;charset=utf-8,%3Csvg%20viewBox%3D%220%200%20200%20100%22%3E%3C%2Fsvg%3E",
@@ -74,30 +75,78 @@ describe("editor store", () => {
 
     const attached = useEditorStore.getState().backgroundImage;
     expect(attached?.fileName).toBe("plant.svg");
-    expect(attached?.width).toBeGreaterThan(0);
-    expect(useEditorStore.getState().tool).toBe("background");
+    expect(attached?.opacity).toBe(0.65);
+    // The floor adopts the image aspect: width unchanged, height = width / (200/100).
+    expect(useEditorStore.getState().map.canvas).toEqual({ width: widthBefore, height: widthBefore / 2 });
 
     useEditorStore.getState().setBackgroundImageOpacity(0.25);
-    useEditorStore.getState().setBackgroundImageLocked(true);
     expect(useEditorStore.getState().backgroundImage?.opacity).toBe(0.25);
-    expect(useEditorStore.getState().backgroundImage?.locked).toBe(true);
-
-    useEditorStore.getState().updateBackgroundImage((backgroundImage) => ({
-      ...backgroundImage,
-      x: -12,
-      y: -12,
-      width: 4,
-      height: 2,
-    }));
-    const bounds = getBounds(useEditorStore.getState().map, useEditorStore.getState().backgroundImage);
-    expect(bounds.x).toBeLessThanOrEqual(-14);
-
-    useEditorStore.getState().fitBackgroundImageToMap();
-    expect(useEditorStore.getState().backgroundImage?.width).toBeGreaterThan(0);
+    // Opacity is clamped to [0, 1].
+    useEditorStore.getState().setBackgroundImageOpacity(5);
+    expect(useEditorStore.getState().backgroundImage?.opacity).toBe(1);
 
     useEditorStore.getState().removeBackgroundImage();
     expect(useEditorStore.getState().backgroundImage).toBeNull();
-    expect(useEditorStore.getState().tool).toBe("select");
+    // Removing the image reverts the floor to the default square floor.
+    expect(useEditorStore.getState().map.canvas).toEqual(DEFAULT_CANVAS_SIZE);
+  });
+
+  it("calibrates the floor width, rescaling nodes so LIF export is to-scale", () => {
+    const before = useEditorStore.getState().map;
+    const dockBefore = before.nodes.find((node) => node.id === "dock-a")!;
+    const fractionX = dockBefore.x / before.canvas.width;
+    const fractionY = dockBefore.y / before.canvas.height;
+
+    // No image attached -> width-only rescale (height axis unchanged).
+    useEditorStore.getState().setCanvasWidth(400);
+
+    const after = useEditorStore.getState().map;
+    expect(after.canvas).toEqual({ width: 400, height: before.canvas.height });
+    const dockAfter = after.nodes.find((node) => node.id === "dock-a")!;
+    // x doubled (200 -> 400), y untouched; the node holds its plan-fraction across.
+    expect(dockAfter.x).toBeCloseTo(dockBefore.x * 2, 10);
+    expect(dockAfter.y).toBe(dockBefore.y);
+    expect(dockAfter.x / after.canvas.width).toBeCloseTo(fractionX, 12);
+    expect(dockAfter.y / after.canvas.height).toBeCloseTo(fractionY, 12);
+
+    // The VDA/LIF export reflects the new to-scale coordinates.
+    const order = buildVdaOrder(
+      after,
+      { mapId: after.id, agvSerialNumber: "agv-1", routeNodeIds: ["dock-a", "corr-1"] },
+      "order-1"
+    );
+    const exportedDock = order.nodes.find((node) => node.nodeId === "dock-a")!;
+    expect(exportedDock.nodePosition!.x).toBeCloseTo(dockAfter.x, 10);
+    expect(exportedDock.nodePosition!.y).toBeCloseTo(dockAfter.y, 10);
+  });
+
+  it("rejects a non-positive calibration width (no-op)", () => {
+    const before = useEditorStore.getState().map;
+    useEditorStore.getState().setCanvasWidth(0);
+    useEditorStore.getState().setCanvasWidth(-5);
+    expect(useEditorStore.getState().map.canvas).toEqual(before.canvas);
+  });
+
+  it("rescales the height uniformly when calibrating width with an aspect-locked image", () => {
+    useEditorStore.getState().attachBackgroundImage({
+      src: "data:image/svg+xml;charset=utf-8,%3Csvg%20viewBox%3D%220%200%20200%20100%22%3E%3C%2Fsvg%3E",
+      fileName: "plant.svg",
+      mediaType: "image/svg+xml",
+      naturalWidth: 200,
+      naturalHeight: 100,
+    });
+    // Image is 2:1, so the floor is now width x (width/2).
+    const attached = useEditorStore.getState().map.canvas;
+    expect(attached.height).toBe(attached.width / 2);
+
+    useEditorStore.getState().setCanvasWidth(300);
+    // Aspect-locked: height follows to keep the 2:1 ratio.
+    expect(useEditorStore.getState().map.canvas).toEqual({ width: 300, height: 150 });
+
+    // Unlock and calibrate height independently (distorted scan): y only.
+    useEditorStore.getState().setHeightAspectLocked(false);
+    useEditorStore.getState().setCanvasHeight(200);
+    expect(useEditorStore.getState().map.canvas).toEqual({ width: 300, height: 200 });
   });
 
   it("selects a connected route node by node", () => {
@@ -145,15 +194,17 @@ describe("editor store", () => {
     let reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
     expect(isSupportedQuadraticBezier(forward.trajectory)).toBe(true);
     expect(isSupportedQuadraticBezier(reverse.trajectory)).toBe(true);
+    // dock-a (92.5,95) -> corr-1 (97.5,95) on the floor-centered demo; the default
+    // handle bulges 1.25 m off the midpoint.
     expect(forward.trajectory?.controlPoints).toMatchObject([
-      { x: 0, y: 0 },
-      { x: 2.5, y: 1.25 },
-      { x: 5, y: 0 },
+      { x: 92.5, y: 95 },
+      { x: 95, y: 96.25 },
+      { x: 97.5, y: 95 },
     ]);
     expect(reverse.trajectory?.controlPoints).toMatchObject([
-      { x: 5, y: 0 },
-      { x: 2.5, y: 1.25 },
-      { x: 0, y: 0 },
+      { x: 97.5, y: 95 },
+      { x: 95, y: 96.25 },
+      { x: 92.5, y: 95 },
     ]);
 
     useEditorStore.getState().updateSelectedEdgeCurveHandle(2.5, 3);
@@ -181,8 +232,8 @@ describe("editor store", () => {
     reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
     expect(isSupportedQuadraticBezier(forward.trajectory)).toBe(true);
     expect(isSupportedQuadraticBezier(reverse.trajectory)).toBe(true);
-    expect(forward.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 1.25 });
-    expect(reverse.trajectory?.controlPoints[1]).toMatchObject({ x: 2.5, y: 1.25 });
+    expect(forward.trajectory?.controlPoints[1]).toMatchObject({ x: 95, y: 96.25 });
+    expect(reverse.trajectory?.controlPoints[1]).toMatchObject({ x: 95, y: 96.25 });
   });
 
   it("bifurcates only the selected directed edge", () => {
@@ -193,7 +244,7 @@ describe("editor store", () => {
     const next = useEditorStore.getState();
     const inserted = next.map.nodes.find((node) => node.id === "n-10");
 
-    expect(inserted).toMatchObject({ id: "n-10", x: 2.5, y: 0 });
+    expect(inserted).toMatchObject({ id: "n-10", x: 95, y: 95 });
     expect(next.selection).toEqual({ type: "node", id: "n-10" });
     expect(next.map.edges.some((edge) => edge.id === "dock-a-corr-1")).toBe(false);
     expect(next.map.edges.some((edge) => edge.from === "corr-1" && edge.to === "dock-a")).toBe(true);
@@ -209,7 +260,7 @@ describe("editor store", () => {
     const next = useEditorStore.getState();
     const edgeDirections = next.map.edges.map((edge) => `${edge.from}->${edge.to}`);
 
-    expect(next.map.nodes.find((node) => node.id === "n-10")).toMatchObject({ x: 2.5, y: 0 });
+    expect(next.map.nodes.find((node) => node.id === "n-10")).toMatchObject({ x: 95, y: 95 });
     expect(edgeDirections).not.toContain("dock-a->corr-1");
     expect(edgeDirections).not.toContain("corr-1->dock-a");
     expect(edgeDirections).toContain("dock-a->n-10");
@@ -247,7 +298,9 @@ describe("editor store", () => {
     const store = useEditorStore.getState();
     store.selectEdge("dock-a-corr-1");
     store.makeSelectedEdgeCurve();
-    useEditorStore.getState().updateSelectedEdgeCurveHandle(2.5, 3);
+    // Handle near the floor-centered dock-a (92.5,95)->corr-1 (97.5,95) edge,
+    // bulging ~3 m above the y=95 row (mirrors the old (2.5,3) on a y=0 edge).
+    useEditorStore.getState().updateSelectedEdgeCurveHandle(95, 98);
 
     useEditorStore.getState().bifurcateSelectedEdge();
 
@@ -256,12 +309,12 @@ describe("editor store", () => {
     const first = next.map.edges.find((edge) => edge.from === "dock-a" && edge.to === "n-10")!;
     const second = next.map.edges.find((edge) => edge.from === "n-10" && edge.to === "corr-1")!;
 
-    expect(inserted.x).toBeCloseTo(2.5);
-    expect(inserted.y).toBeCloseTo(1.5);
+    expect(inserted.x).toBeCloseTo(95);
+    expect(inserted.y).toBeCloseTo(96.5);
     expect(isSupportedQuadraticBezier(first.trajectory)).toBe(true);
     expect(isSupportedQuadraticBezier(second.trajectory)).toBe(true);
-    expect(first.trajectory?.controlPoints[1]).toMatchObject({ x: 1.25, y: 1.5 });
-    expect(second.trajectory?.controlPoints[1]).toMatchObject({ x: 3.75, y: 1.5 });
+    expect(first.trajectory?.controlPoints[1]).toMatchObject({ x: 93.75, y: 96.5 });
+    expect(second.trajectory?.controlPoints[1]).toMatchObject({ x: 96.25, y: 96.5 });
   });
 
   it("does not bifurcate unsupported imported trajectories", () => {

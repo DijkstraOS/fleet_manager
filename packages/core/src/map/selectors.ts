@@ -1,4 +1,4 @@
-import type { MapDocument } from "./types";
+import type { MapDocument, MapNode } from "./types";
 
 /**
  * Derive the set of "action/station" node ids from LIF data preserved in the
@@ -45,6 +45,41 @@ export function getStationNodeIds(map: MapDocument): ReadonlySet<string> {
   }
 
   return stationNodeIds;
+}
+
+/**
+ * Whether a node carries a non-empty label. A blank label (empty or whitespace)
+ * reads as "unlabeled" — the marker that, combined with having no actions, makes
+ * a node a pure path-support node. Exported so the renderer can decide whether to
+ * draw the label text at all.
+ *
+ * Pure: no I/O, no mutation.
+ */
+export function nodeHasLabel(node: MapNode): boolean {
+  return (node.label ?? "").trim().length > 0;
+}
+
+/**
+ * Derive the set of "support" node ids — pure path-support nodes that carry no
+ * action/station role and no label. A support node renders as a small dot with no
+ * incoming arrowhead; any node with a label OR actions is a "full" node.
+ *
+ * A node is a support node when it is NOT in {@link getActionNodeIds} (so station
+ * and action nodes are excluded) AND it has no non-empty label.
+ *
+ * Pure: no I/O, no mutation.
+ */
+export function getSupportNodeIds(map: MapDocument): ReadonlySet<string> {
+  const actionNodeIds = getActionNodeIds(map);
+  const supportNodeIds = new Set<string>();
+
+  for (const node of map.nodes) {
+    if (!actionNodeIds.has(node.id) && !nodeHasLabel(node)) {
+      supportNodeIds.add(node.id);
+    }
+  }
+
+  return supportNodeIds;
 }
 
 /**

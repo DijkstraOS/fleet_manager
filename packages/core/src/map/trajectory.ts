@@ -217,7 +217,7 @@ export function splitEdge(
       };
   const node: MapNode = options.node || {
     id: newNodeId,
-    label: newNodeId,
+    label: "",
     x: splitPoint.x,
     y: splitPoint.y,
   };

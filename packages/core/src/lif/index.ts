@@ -81,7 +81,7 @@ function importLifNode(node: LifNode): MapNode {
       : undefined;
   const mapNode: MapNode = {
     id: node.nodeId,
-    label: node.nodeName || node.nodeId,
+    label: node.nodeName ?? "",
     x: numberOr(node.nodePosition.x, 0),
     y: numberOr(node.nodePosition.y, 0),
     ...(theta !== undefined ? { theta } : {}),

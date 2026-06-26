@@ -1,6 +1,7 @@
 import {
   appendEdge,
   appendNode,
+  clampPointToFloor,
   findEdge,
   findNode,
   moveNode,
@@ -40,9 +41,10 @@ export const createMapEditSlice: StateCreator<EditorState, [], [], MapEditSlice>
 
   addNodeAt: (x, y) => set((state) => {
     const id = nextNodeId(state.map);
+    const point = clampPointToFloor(x, y, state.map.canvas);
     return {
       selection: { type: "node", id },
-      map: stampMap(state.map, appendNode({ id, label: id, x, y })),
+      map: stampMap(state.map, appendNode({ id, label: "", x: point.x, y: point.y })),
     };
   }),
 
@@ -142,9 +144,10 @@ export const createMapEditSlice: StateCreator<EditorState, [], [], MapEditSlice>
   beginDragNode: (nodeId) => set({ dragNodeId: nodeId }),
 
   dragNodeTo: (x, y) => {
-    const { dragNodeId, tool } = get();
+    const { dragNodeId, tool, map } = get();
     if (!dragNodeId || tool !== "select") return;
-    get().updateMap(moveNode(dragNodeId, x, y));
+    const point = clampPointToFloor(x, y, map.canvas);
+    get().updateMap(moveNode(dragNodeId, point.x, point.y));
   },
 
   endDragNode: () => set({ dragNodeId: null }),

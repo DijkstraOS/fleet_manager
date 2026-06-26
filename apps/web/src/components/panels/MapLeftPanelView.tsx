@@ -3,7 +3,6 @@ import {
   Image,
   Link,
   Lock,
-  Maximize2,
   MousePointer2,
   Plus,
   Save,
@@ -11,8 +10,10 @@ import {
   Unlock,
   Upload,
 } from "lucide-react";
+import type { CanvasSize } from "@agv/core";
 import type { EditorBackgroundImage, Tool } from "../../types";
 import { ToolButton } from "../toolbar/ToolButton";
+import { CalibrationField } from "./CalibrationField";
 
 /**
  * Persistent left column of the Map tab: Map Tools, the Background section, and the
@@ -22,16 +23,22 @@ import { ToolButton } from "../toolbar/ToolButton";
 export function MapLeftPanelView(props: {
   tool: Tool;
   backgroundImage: EditorBackgroundImage | null;
+  canvas: CanvasSize;
+  heightAspectLocked: boolean;
   onSetTool: (tool: Tool) => void;
   onSave: () => void;
   onExport: () => void;
   onImport: (file: File) => void;
   onUploadBackground: (file: File) => void;
   onSetBackgroundOpacity: (opacity: number) => void;
-  onFitBackground: () => void;
-  onSetBackgroundLocked: (locked: boolean) => void;
   onRemoveBackground: () => void;
+  onSetCanvasWidth: (width: number) => void;
+  onSetCanvasHeight: (height: number) => void;
+  onSetHeightAspectLocked: (locked: boolean) => void;
 }) {
+  // Height is editable only when no image constrains the aspect, or the user has
+  // unlocked it to calibrate a distorted scan.
+  const heightLocked = props.backgroundImage !== null && props.heightAspectLocked;
   return (
     <aside className="left-panel command-panel">
       <section>
@@ -40,7 +47,6 @@ export function MapLeftPanelView(props: {
           <ToolButton active={props.tool === "select"} title="Select and move nodes" onClick={() => props.onSetTool("select")} icon={<MousePointer2 />} />
           <ToolButton active={props.tool === "node"} title="Add node" onClick={() => props.onSetTool("node")} icon={<Plus />} />
           <ToolButton active={props.tool === "edge"} title="Add one-way edge" onClick={() => props.onSetTool("edge")} icon={<Link />} />
-          <ToolButton active={props.tool === "background"} title="Move and scale background" onClick={() => props.onSetTool("background")} icon={<Image />} disabled={!props.backgroundImage} />
         </div>
       </section>
 
@@ -48,7 +54,7 @@ export function MapLeftPanelView(props: {
         <h2>Background</h2>
         <div className="command-stack">
           <label className="secondary-button file-command">
-            <Upload /> Upload image
+            <Upload /> {props.backgroundImage ? "Replace image" : "Upload image"}
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
@@ -61,11 +67,38 @@ export function MapLeftPanelView(props: {
             />
           </label>
           {props.backgroundImage && (
+            <div className="background-summary">
+              <Image />
+              <span>{props.backgroundImage.fileName}</span>
+            </div>
+          )}
+
+          <CalibrationField
+            label="Width (m)"
+            value={props.canvas.width}
+            onCommit={props.onSetCanvasWidth}
+          />
+          <CalibrationField
+            label="Height (m)"
+            value={props.canvas.height}
+            readOnly={heightLocked}
+            onCommit={props.onSetCanvasHeight}
+            action={
+              props.backgroundImage && (
+                <button
+                  className="icon-button"
+                  type="button"
+                  title={props.heightAspectLocked ? "Unlock height (distorted scan)" : "Lock height to image aspect"}
+                  onClick={() => props.onSetHeightAspectLocked(!props.heightAspectLocked)}
+                >
+                  {props.heightAspectLocked ? <Lock /> : <Unlock />}
+                </button>
+              )
+            }
+          />
+
+          {props.backgroundImage && (
             <>
-              <div className="background-summary">
-                <Image />
-                <span>{props.backgroundImage.fileName}</span>
-              </div>
               <label className="range-field">
                 <span>Opacity</span>
                 <input
@@ -77,13 +110,6 @@ export function MapLeftPanelView(props: {
                   onChange={(event) => props.onSetBackgroundOpacity(Number(event.currentTarget.value) / 100)}
                 />
               </label>
-              <button className="secondary-button" type="button" onClick={props.onFitBackground}>
-                <Maximize2 /> Fit to map
-              </button>
-              <button className="secondary-button" type="button" onClick={() => props.onSetBackgroundLocked(!props.backgroundImage?.locked)}>
-                {props.backgroundImage.locked ? <Unlock /> : <Lock />}
-                {props.backgroundImage.locked ? "Unlock background" : "Lock background"}
-              </button>
               <button className="secondary-button danger" type="button" onClick={props.onRemoveBackground}>
                 <Trash2 /> Remove background
               </button>

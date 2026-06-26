@@ -32,12 +32,24 @@ export interface MapEdge {
   unsupported?: Record<string, unknown>;
 }
 
+/**
+ * The finite factory floor the map lives on, in meters. The floor spans world
+ * `(0,0)` (top-left origin) to `(width, height)`, with +X right / +Y down — the
+ * same orientation the simulator and trajectory headings already assume, so no
+ * axis is ever flipped. All valid node coordinates are non-negative.
+ */
+export interface CanvasSize {
+  width: number;
+  height: number;
+}
+
 export interface MapDocument {
   id: string;
   name: string;
   version: string;
   createdAt: string;
   updatedAt: string;
+  canvas: CanvasSize;
   nodes: MapNode[];
   edges: MapEdge[];
   unsupported?: Record<string, unknown>;

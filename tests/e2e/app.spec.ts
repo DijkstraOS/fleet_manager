@@ -14,30 +14,41 @@ test("runs the map editor simulator path", async ({ page }) => {
   await page.keyboard.press("Backspace");
   await expect(page.locator("circle.node")).toHaveCount(initialNodes);
 
+  // Uploading a 2:1 floor plan reshapes the finite floor to the image aspect and
+  // fills it edge-to-edge: the image is anchored at the origin and the floor's
+  // height becomes half its width.
+  const floorWidthBefore = await page.locator("rect.canvas-floor").getAttribute("width");
+  const floorHeightBefore = await page.locator("rect.canvas-floor").getAttribute("height");
+  expect(floorWidthBefore).toBe(floorHeightBefore);
   await page.locator('input[type="file"][accept*="image/svg+xml"]').setInputFiles({
     name: "plant.svg",
     mimeType: "image/svg+xml",
     buffer: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><rect width="20" height="10" fill="#eee"/><path d="M 1 5 H 19" stroke="#777"/></svg>`),
   });
-  await expect(page.locator("image.background-image")).toHaveCount(1);
+  const backgroundImageEl = page.locator("image.background-image");
+  await expect(backgroundImageEl).toHaveCount(1);
+  // The image fills the floor: same width as the (unchanged) floor, half the height.
+  await expect(backgroundImageEl).toHaveAttribute("x", "0");
+  await expect(backgroundImageEl).toHaveAttribute("y", "0");
+  await expect(backgroundImageEl).toHaveAttribute("width", String(floorWidthBefore));
+  await expect(page.locator("rect.canvas-floor")).toHaveAttribute("width", String(floorWidthBefore));
+  await expect(page.locator("rect.canvas-floor")).toHaveAttribute("height", String(Number(floorWidthBefore) / 2));
+  // The move/scale handle is gone; only opacity + replace + remove remain.
+  await expect(page.locator(".background-scale-handle")).toHaveCount(0);
+  await expect(page.getByTitle("Move and scale background")).toHaveCount(0);
   await page.locator(".range-field input").evaluate((element) => {
     const input = element as HTMLInputElement;
     input.value = "35";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await page.getByTitle("Move and scale background").click();
-  const beforeMove = await page.locator("image.background-image").getAttribute("x");
-  await dragWorld(page, -1, 1, -0.5, 1.5);
-  await expect.poll(() => page.locator("image.background-image").getAttribute("x")).not.toBe(beforeMove);
-  const handle = page.locator(".background-scale-handle");
-  const handleBox = await handle.boundingBox();
-  if (!handleBox) throw new Error("Background scale handle is not visible.");
-  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(handleBox.x + handleBox.width / 2 + 24, handleBox.y + handleBox.height / 2 + 24);
-  await page.mouse.up();
-  await page.getByRole("button", { name: /Lock background/i }).click();
+  await expect(backgroundImageEl).toHaveAttribute("opacity", "0.35");
+
+  // Removing the image reverts the floor to the default square floor.
+  await page.getByRole("button", { name: /Remove background/i }).click();
+  await expect(backgroundImageEl).toHaveCount(0);
+  await expect(page.locator("rect.canvas-floor")).toHaveAttribute("width", String(floorWidthBefore));
+  await expect(page.locator("rect.canvas-floor")).toHaveAttribute("height", String(floorWidthBefore));
 
   await page.getByTitle("Select and move nodes").click();
   // Nothing selected yet: the right-edge floating card stays collapsed.
@@ -173,29 +184,6 @@ async function clickWorld(page: import("@playwright/test").Page, x: number, y: n
     return { x: screenPoint.x, y: screenPoint.y };
   }, { x, y });
   await page.mouse.click(point.x, point.y);
-}
-
-async function dragWorld(page: import("@playwright/test").Page, fromX: number, fromY: number, toX: number, toY: number) {
-  const from = await worldToScreen(page, fromX, fromY);
-  const to = await worldToScreen(page, toX, toY);
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move(to.x, to.y);
-  await page.mouse.up();
-}
-
-async function worldToScreen(page: import("@playwright/test").Page, x: number, y: number) {
-  const svg = page.locator("svg.map-svg");
-  return svg.evaluate((element, world) => {
-    const svgElement = element as SVGSVGElement;
-    const svgPoint = svgElement.createSVGPoint();
-    svgPoint.x = world.x;
-    svgPoint.y = world.y;
-    const matrix = svgElement.getScreenCTM();
-    if (!matrix) throw new Error("Map SVG has no screen transform.");
-    const screenPoint = svgPoint.matrixTransform(matrix);
-    return { x: screenPoint.x, y: screenPoint.y };
-  }, { x, y });
 }
 
 function normalizeText(value: string | null) {

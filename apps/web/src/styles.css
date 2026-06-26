@@ -440,10 +440,22 @@ h2 {
 .map-svg {
   width: 100%;
   height: calc(100vh - 100px);
-  background: #f8fafc;
+  background: #e2e8f0;
   border: 1px solid #cfd8e3;
   border-radius: 8px;
   touch-action: none;
+}
+
+/* Out-of-bounds margin around the finite floor: muted gray so "not floor" reads. */
+.canvas-letterbox {
+  fill: #e2e8f0;
+}
+
+/* The finite factory floor: a bordered white rectangle anchored at the origin. */
+.canvas-floor {
+  fill: #f8fafc;
+  stroke: #94a3b8;
+  stroke-width: 0.08;
 }
 
 .canvas-controls {
@@ -466,6 +478,11 @@ h2 {
   cursor: pointer;
 }
 
+/* Edges arriving at a pure support node carry no arrowhead (set in EdgeLayer). */
+.edge.no-arrow {
+  marker-end: none;
+}
+
 .edge.subtle {
   stroke: #94a3b8;
   stroke-width: 0.055;
@@ -484,30 +501,8 @@ h2 {
   opacity: 1;
 }
 
-.background-layer.editable {
-  cursor: move;
-}
-
 .background-image {
   pointer-events: inherit;
-}
-
-.background-frame {
-  fill: none;
-  stroke: #155eef;
-  stroke-width: 0.08;
-  stroke-dasharray: 0.24 0.18;
-}
-
-.background-frame.locked {
-  stroke: #64748b;
-}
-
-.background-scale-handle {
-  fill: #ffffff;
-  stroke: #155eef;
-  stroke-width: 0.08;
-  cursor: nwse-resize;
 }
 
 .curve-handle {
@@ -535,12 +530,11 @@ h2 {
   cursor: grab;
 }
 
-/* Invisible hit target behind a small support-node dot so it stays grabbable. */
-.node-hit {
-  fill: transparent;
-  stroke: none;
-  pointer-events: all;
-  cursor: grab;
+/* Pure path-support nodes read daintier than action nodes: smaller dot (radius
+   in geometry.ts) and a thinner ring. Listed before the active/route variants so
+   a selected support node still picks up their thicker emphasis stroke. */
+.node.support {
+  stroke-width: 0.04;
 }
 
 .node.subtle {

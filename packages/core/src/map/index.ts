@@ -1,4 +1,5 @@
 import type { MapDocument, MapEdge, MapNode, RouteDocument, ValidationIssue } from "./types";
+import { DEFAULT_CANVAS_SIZE } from "./canvas";
 import { validateTrajectory } from "./trajectory";
 
 export function createEmptyMap(name = "Untitled Map"): MapDocument {
@@ -9,10 +10,16 @@ export function createEmptyMap(name = "Untitled Map"): MapDocument {
     version: "1",
     createdAt: now,
     updatedAt: now,
+    canvas: { ...DEFAULT_CANVAS_SIZE },
     nodes: [],
     edges: [],
   };
 }
+
+// The demo grid is authored around the origin (bbox (0,0)->(15,10)) then shifted
+// so its bounding box centers on the 200x200 floor (center (100,100)).
+const DEMO_OFFSET_X = 92.5;
+const DEMO_OFFSET_Y = 95;
 
 export function createDemoMap(): MapDocument {
   const now = new Date().toISOString();
@@ -22,16 +29,17 @@ export function createDemoMap(): MapDocument {
     version: "1",
     createdAt: now,
     updatedAt: now,
+    canvas: { ...DEFAULT_CANVAS_SIZE },
     nodes: [
-      { id: "dock-a", label: "Dock A", x: 0, y: 0 },
-      { id: "corr-1", label: "Corridor 1", x: 5, y: 0 },
-      { id: "corr-2", label: "Corridor 2", x: 10, y: 0 },
-      { id: "dock-b", label: "Dock B", x: 15, y: 0 },
-      { id: "mat-a", label: "Material A", x: 0, y: 6 },
-      { id: "corr-3", label: "Corridor 3", x: 5, y: 6 },
-      { id: "corr-4", label: "Corridor 4", x: 10, y: 6 },
-      { id: "mat-b", label: "Material B", x: 15, y: 6 },
-      { id: "drop", label: "Drop", x: 7.5, y: 10 },
+      demoNode("dock-a", "Dock A", 0, 0),
+      demoNode("corr-1", "Corridor 1", 5, 0),
+      demoNode("corr-2", "Corridor 2", 10, 0),
+      demoNode("dock-b", "Dock B", 15, 0),
+      demoNode("mat-a", "Material A", 0, 6),
+      demoNode("corr-3", "Corridor 3", 5, 6),
+      demoNode("corr-4", "Corridor 4", 10, 6),
+      demoNode("mat-b", "Material B", 15, 6),
+      demoNode("drop", "Drop", 7.5, 10),
     ],
     edges: [
       edge("dock-a", "corr-1"),
@@ -58,6 +66,10 @@ export function createDemoMap(): MapDocument {
   };
 }
 
+function demoNode(id: string, label: string, x: number, y: number): MapNode {
+  return { id, label, x: x + DEMO_OFFSET_X, y: y + DEMO_OFFSET_Y };
+}
+
 function edge(from: string, to: string, maxSpeed = 1.5): MapEdge {
   return {
     id: `${from}-${to}`,
@@ -78,6 +90,10 @@ export function validateMap(map: MapDocument): ValidationIssue[] {
 
   if (!map.id.trim()) {
     issues.push({ code: "map.id.empty", message: "Map id is required." });
+  }
+
+  if (!map.canvas || !(map.canvas.width > 0) || !(map.canvas.height > 0)) {
+    issues.push({ code: "map.canvas.invalid", message: "Map canvas width and height must be positive." });
   }
 
   for (const node of map.nodes) {
@@ -192,8 +208,9 @@ export function slugify(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export type { EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, RouteDocument, ValidationIssue } from "./types";
+export type { CanvasSize, EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, RouteDocument, ValidationIssue } from "./types";
 export * from "./ids";
 export * from "./trajectory";
 export * from "./operations";
 export * from "./selectors";
+export * from "./canvas";
