@@ -4,9 +4,15 @@ import { useRouteCommands } from "../../hooks/useRouteCommands";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
 import { useRouteStore } from "../../stores/route-store";
-import { RouteWorkspacePanelView } from "./RouteWorkspacePanelView";
+import { RouteLeftPanelView } from "./RouteLeftPanelView";
 
-export function RouteWorkspacePanel() {
+/**
+ * Left-zone container for the Route tab. Owns the route *actions* — the saved-routes list
+ * (browse/create) plus, while a route is active, Assign-AGV and Send / Start-Loop /
+ * Stop-Loop. Editing the route's geometry lives in the right floating card
+ * (RouteEditorCard); this panel only acts on the current draft/selection.
+ */
+export function RouteLeftPanel() {
   const map = useEditorStore((state) => state.map);
   const agvs = useFleetStore((state) => state.agvs);
   const selectedAgvSerial = useFleetStore((state) => state.selectedAgvSerial);
@@ -14,15 +20,17 @@ export function RouteWorkspacePanel() {
   const selectAgv = useFleetStore((state) => state.selectAgv);
   const routes = useRouteStore((state) => state.routes);
   const selectedRouteId = useRouteStore((state) => state.selectedRouteId);
-  const draftRouteName = useRouteStore((state) => state.draftName);
+  const draftActive = useRouteStore((state) => state.draftActive);
   const draftRouteNodeIds = useRouteStore((state) => state.draftNodeIds);
-  const routeStatus = useRouteStore((state) => state.status);
   const startNewRoute = useRouteStore((state) => state.startNewRoute);
   const selectRoute = useRouteStore((state) => state.selectRoute);
-  const setDraftRouteName = useRouteStore((state) => state.setDraftName);
-  const removeLastRouteNode = useRouteStore((state) => state.removeLastDraftNode);
-  const clearDraftRoute = useRouteStore((state) => state.clearDraft);
+  const closeEditor = useRouteStore((state) => state.closeEditor);
   const [loopRoute, setLoopRoute] = useState(false);
+
+  // Tapping the already-selected route toggles it off (deselect + close the editor).
+  const toggleRoute = (routeId: string) =>
+    routeId === selectedRouteId ? closeEditor() : selectRoute(routeId);
+
   const routeIssues = useMemo(() => validateRoute(map, draftRouteNodeIds), [map, draftRouteNodeIds]);
   const agvList = useMemo(() => Object.values(agvs), [agvs]);
   const selectedRoute = useMemo(
@@ -39,38 +47,26 @@ export function RouteWorkspacePanel() {
     && selectedOrderStatus.status !== "rejected"
     && selectedOrderStatus.status !== "loop stopped"
   );
-  const { saveRoute, deleteRoute, sendRoute, stopLoop } = useRouteCommands({
-    agvs: agvList,
-    routeIssues,
-    selectedRoute,
-  });
+  const { sendRoute, stopLoop } = useRouteCommands({ agvs: agvList, routeIssues, selectedRoute });
   const canSendRoute = draftRouteNodeIds.length >= 2
     && routeIssues.length === 0
     && agvList.length > 0
     && (!loopRoute || canLoopRoute);
 
   return (
-    <RouteWorkspacePanelView
+    <RouteLeftPanelView
       routes={routes}
       selectedRouteId={selectedRouteId}
-      draftRouteName={draftRouteName}
-      draftRouteNodeIds={draftRouteNodeIds}
-      routeIssues={routeIssues}
-      routeStatus={routeStatus}
+      onNewRoute={startNewRoute}
+      onSelectRoute={toggleRoute}
+      showActions={draftActive}
       agvs={agvList}
       selectedAgvSerial={selectedAgvSerial}
       loopRoute={loopRoute}
       canLoopRoute={canLoopRoute}
-      canSaveRoute={draftRouteName.trim().length > 0 && draftRouteNodeIds.length >= 2 && routeIssues.length === 0}
+      draftRouteNodeIds={draftRouteNodeIds}
       canSendRoute={canSendRoute}
       canStopLoop={canStopLoop}
-      onNewRoute={startNewRoute}
-      onSelectRoute={selectRoute}
-      onDraftName={setDraftRouteName}
-      onRemoveLastNode={removeLastRouteNode}
-      onClearRoute={clearDraftRoute}
-      onSaveRoute={() => void saveRoute()}
-      onDeleteRoute={() => void deleteRoute()}
       onSelectAgv={selectAgv}
       onLoopRouteChange={setLoopRoute}
       onSendRoute={() => void sendRoute({ loop: loopRoute })}

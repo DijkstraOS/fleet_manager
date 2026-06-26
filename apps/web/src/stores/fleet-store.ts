@@ -23,10 +23,13 @@ export interface TrackedOrderStatus {
 export interface FleetState {
   agvs: Record<string, RealtimeAgv>;
   selectedAgvSerial: string | null;
+  trackedAgvSerial: string | null;
   realtimeStatus: string;
   orderStatus: string;
   orderStatuses: Record<string, TrackedOrderStatus>;
   selectAgv: (serialNumber: string) => void;
+  trackAgv: (serialNumber: string) => void;
+  clearTrackedAgv: () => void;
   setRealtimeStatus: (status: string) => void;
   setOrderStatus: (status: string) => void;
   handleRealtimeMessage: (message: Record<string, unknown>) => void;
@@ -35,11 +38,18 @@ export interface FleetState {
 export const useFleetStore = create<FleetState>((set) => ({
   agvs: {},
   selectedAgvSerial: null,
+  trackedAgvSerial: null,
   realtimeStatus: "Connecting realtime...",
   orderStatus: "",
   orderStatuses: {},
 
+  // `selectedAgvSerial` is the Route tab's assign-target. `trackedAgvSerial` is the
+  // Tracking tab's selection — the AGV whose detail floats in the right card. They are
+  // independent so selecting on one tab never disturbs the other. Tracking selection is
+  // list-driven (not auto-set from realtime); the card opens only on an explicit pick.
   selectAgv: (selectedAgvSerial) => set({ selectedAgvSerial }),
+  trackAgv: (trackedAgvSerial) => set({ trackedAgvSerial }),
+  clearTrackedAgv: () => set({ trackedAgvSerial: null }),
   setRealtimeStatus: (realtimeStatus) => set({ realtimeStatus }),
   setOrderStatus: (orderStatus) => set({ orderStatus }),
 

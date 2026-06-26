@@ -1,25 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { LIFParser } from "vdma-lif";
 import {
+  appendEdge,
+  appendNode,
+  applyMapOps,
   buildVdaOrder,
   copyBifurcatedEdgeProperties,
   createQuadraticBezierTrajectory,
   createDemoMap,
   createEmptyMap,
   edgesShareQuadraticHandle,
+  findEdgeById,
   getQuadraticBezierPoseAtDistance,
   exportLifDocument,
   importLifDocument,
   isSupportedQuadraticBezier,
+  moveNode,
   nextRouteId,
   pointsMatch,
+  removeEdge,
+  removeNode,
+  replaceEdge,
+  replaceEdgeWith,
+  replaceNode,
   resetReverseEdgeToSelectedCurvePath,
   splitEdge,
   splitQuadraticTrajectory,
   validateMap,
   validateRoute,
   validateRouteDocument,
+  type MapDocument,
   type MapEdge,
+  type MapNode,
 } from "./index";
 
 describe("map validation", () => {
@@ -501,5 +513,106 @@ describe("edge bifurcation / trajectory geometry", () => {
     expect(result.trajectory?.controlPoints[0]).toMatchObject({ x: 5, y: 0 });
     expect(result.trajectory?.controlPoints[2]).toMatchObject({ x: 0, y: 0 });
     expect(result.trajectory?.controlPoints[1]).not.toMatchObject({ x: 2.5, y: 3 });
+  });
+});
+
+describe("map operations", () => {
+  function node(id: string, x: number, y: number): MapNode {
+    return { id, label: id, x, y };
+  }
+
+  function straightEdge(from: string, to: string): MapEdge {
+    return {
+      id: `${from}-${to}`,
+      label: `${from} -> ${to}`,
+      from,
+      to,
+      orientationType: "TANGENTIAL",
+      rotationAllowed: true,
+      trajectory: null,
+    };
+  }
+
+  // Line a→b→c with a back-edge b→a, so every edge is incident to `b`.
+  function baseMap(): MapDocument {
+    return {
+      ...createEmptyMap("Ops"),
+      nodes: [node("a", 0, 0), node("b", 4, 0), node("c", 8, 0)],
+      edges: [straightEdge("a", "b"), straightEdge("b", "c"), straightEdge("b", "a")],
+    };
+  }
+
+  it("appends nodes and edges without mutating the source map", () => {
+    const map = baseMap();
+    const withNode = appendNode(node("d", 1, 1))(map);
+    const withEdge = appendEdge(straightEdge("a", "c"))(map);
+
+    expect(withNode.nodes.map((item) => item.id)).toEqual(["a", "b", "c", "d"]);
+    expect(findEdgeById(withEdge, "a-c")).toBeTruthy();
+    expect(map.nodes).toHaveLength(3);
+    expect(map.edges).toHaveLength(3);
+  });
+
+  it("removes a node together with every incident edge", () => {
+    const next = removeNode("b")(baseMap());
+    expect(next.nodes.some((item) => item.id === "b")).toBe(false);
+    expect(next.edges).toHaveLength(0);
+  });
+
+  it("removes a single edge by id", () => {
+    const next = removeEdge("a-b")(baseMap());
+    expect(findEdgeById(next, "a-b")).toBeUndefined();
+    expect(next.edges.map((item) => item.id)).toEqual(["b-c", "b-a"]);
+  });
+
+  it("moves a node and re-syncs the endpoints of incident curves", () => {
+    const map = baseMap();
+    const [a, b] = [map.nodes[0]!, map.nodes[1]!];
+    map.edges[0] = { ...map.edges[0]!, trajectory: createQuadraticBezierTrajectory(a, b, { x: 2, y: 2 }) };
+
+    const next = moveNode("a", -1, -1)(map);
+
+    expect(next.nodes.find((item) => item.id === "a")).toMatchObject({ x: -1, y: -1 });
+    expect(findEdgeById(next, "a-b")?.trajectory?.controlPoints[0]).toMatchObject({ x: -1, y: -1 });
+    // source map untouched
+    expect(map.nodes.find((item) => item.id === "a")).toMatchObject({ x: 0, y: 0 });
+  });
+
+  it("replaces a node, rewriting edge references and syncing endpoints when the id changes", () => {
+    const map = baseMap();
+    const [a, b] = [map.nodes[0]!, map.nodes[1]!];
+    map.edges[0] = { ...map.edges[0]!, trajectory: createQuadraticBezierTrajectory(a, b, { x: 2, y: 2 }) };
+
+    const next = replaceNode("a", node("alpha", -2, -2))(map);
+
+    expect(next.nodes.map((item) => item.id)).toEqual(["alpha", "b", "c"]);
+    expect(findEdgeById(next, "a-b")?.from).toBe("alpha");
+    expect(next.edges.find((edge) => edge.to === "alpha")).toBeTruthy();
+    expect(findEdgeById(next, "a-b")?.trajectory?.controlPoints[0]).toMatchObject({ x: -2, y: -2 });
+  });
+
+  it("replaces one edge by id", () => {
+    const map = baseMap();
+    const next = replaceEdge("a-b", { ...map.edges[0]!, label: "renamed" })(map);
+    expect(findEdgeById(next, "a-b")?.label).toBe("renamed");
+    expect(findEdgeById(next, "b-c")?.label).toBe("b -> c");
+  });
+
+  it("splices replacements in place, ignoring an absent target id", () => {
+    const map = baseMap();
+    const spliced = replaceEdgeWith("a-b", [straightEdge("a", "m"), straightEdge("m", "b")])(map);
+    expect(spliced.edges.map((item) => item.id)).toEqual(["a-m", "m-b", "b-c", "b-a"]);
+
+    const unchanged = replaceEdgeWith("absent", [straightEdge("a", "c")])(map);
+    expect(unchanged.edges.map((item) => item.id)).toEqual(["a-b", "b-c", "b-a"]);
+  });
+
+  it("composes operations left-to-right, skips falsy entries, and never stamps updatedAt", () => {
+    const map = baseMap();
+    const next = applyMapOps(map, [appendNode(node("d", 1, 1)), false, removeEdge("b-a"), null]);
+
+    expect(next.nodes.map((item) => item.id)).toEqual(["a", "b", "c", "d"]);
+    expect(findEdgeById(next, "b-a")).toBeUndefined();
+    expect(next.updatedAt).toBe(map.updatedAt);
   });
 });

@@ -4,13 +4,20 @@ import { create } from "zustand";
 function draftFromRoute(
   route: RouteDocument | null | undefined,
   loadedStatus: string,
-): { selectedRouteId: string | null; draftName: string; draftNodeIds: string[]; status: string } {
+): {
+  selectedRouteId: string | null;
+  draftName: string;
+  draftNodeIds: string[];
+  status: string;
+  draftActive: boolean;
+} {
   if (!route) {
     return {
       selectedRouteId: null,
       draftName: "New Route",
       draftNodeIds: [],
       status: "No saved routes for this map.",
+      draftActive: false,
     };
   }
   return {
@@ -18,6 +25,7 @@ function draftFromRoute(
     draftName: route.name,
     draftNodeIds: route.nodeIds,
     status: loadedStatus,
+    draftActive: true,
   };
 }
 
@@ -27,9 +35,14 @@ export interface RouteEditorState {
   draftName: string;
   draftNodeIds: string[];
   status: string;
+  /** Whether a route is being edited — a saved route is selected or a new draft was started.
+   *  Drives the right-zone editor card's open state; false collapses it. */
+  draftActive: boolean;
   setRoutes: (routes: RouteDocument[]) => void;
   startNewRoute: () => void;
   selectRoute: (routeId: string) => void;
+  /** Deselect the active route and collapse the editor card (the close affordance). */
+  closeEditor: () => void;
   setDraftName: (name: string) => void;
   setDraftNodeIds: (nodeIds: string[]) => void;
   addDraftNode: (map: MapDocument, nodeId: string) => void;
@@ -46,6 +59,7 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
   draftName: "New Route",
   draftNodeIds: [],
   status: "No route selected.",
+  draftActive: false,
 
   setRoutes: (routes) => set((state) => {
     const selected = state.selectedRouteId
@@ -62,6 +76,7 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
     draftName: "New Route",
     draftNodeIds: [],
     status: "Create a route by clicking nodes in order.",
+    draftActive: true,
   }),
 
   selectRoute: (routeId) => {
@@ -69,6 +84,14 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
     if (!route) return;
     set(draftFromRoute(route, `Editing ${route.name}.`));
   },
+
+  closeEditor: () => set({
+    selectedRouteId: null,
+    draftName: "New Route",
+    draftNodeIds: [],
+    status: "No route selected.",
+    draftActive: false,
+  }),
 
   setDraftName: (draftName) => set({ draftName }),
   setDraftNodeIds: (draftNodeIds) => set({ draftNodeIds }),

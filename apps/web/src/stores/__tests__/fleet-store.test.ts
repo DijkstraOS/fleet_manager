@@ -7,6 +7,7 @@ describe("fleet store", () => {
     useFleetStore.setState({
       agvs: {},
       selectedAgvSerial: null,
+      trackedAgvSerial: null,
       realtimeStatus: "Connecting realtime...",
       orderStatus: "",
       orderStatuses: {},
@@ -94,6 +95,63 @@ describe("fleet store", () => {
     expect(state.orderStatus).toBe(
       'SIM-001 Dock Loop: rejected — Order starts at node "corr-1" but the AGV is at "dock-a".'
     );
+  });
+});
+
+describe("fleet store — Tracking selection", () => {
+  beforeEach(() => {
+    useFleetStore.setState({
+      agvs: {},
+      selectedAgvSerial: null,
+      trackedAgvSerial: null,
+      realtimeStatus: "Connecting realtime...",
+      orderStatus: "",
+      orderStatuses: {},
+    });
+  });
+
+  it("starts with no tracked AGV and does not auto-track on realtime arrival", () => {
+    // The Tracking card opens only on an explicit pick, so realtime must not select.
+    useFleetStore.getState().handleRealtimeMessage({
+      type: "agv_state",
+      serialNumber: "SIM-001",
+      manufacturer: "DijkstraSim",
+      state: stateFor("dock-a"),
+    });
+
+    expect(useFleetStore.getState().trackedAgvSerial).toBeNull();
+  });
+
+  it("tracks and clears an AGV without disturbing the route assign-target", () => {
+    useFleetStore.getState().selectAgv("SIM-002");
+
+    useFleetStore.getState().trackAgv("SIM-001");
+    expect(useFleetStore.getState().trackedAgvSerial).toBe("SIM-001");
+    // The Route tab's assign-target is independent of the Tracking selection.
+    expect(useFleetStore.getState().selectedAgvSerial).toBe("SIM-002");
+
+    useFleetStore.getState().clearTrackedAgv();
+    expect(useFleetStore.getState().trackedAgvSerial).toBeNull();
+    expect(useFleetStore.getState().selectedAgvSerial).toBe("SIM-002");
+  });
+
+  it("derives no live AGV when the tracked serial left the fleet (card stays closed)", () => {
+    useFleetStore.getState().handleRealtimeMessage({
+      type: "agv_state",
+      serialNumber: "SIM-001",
+      manufacturer: "DijkstraSim",
+      state: stateFor("dock-a"),
+    });
+    useFleetStore.getState().trackAgv("SIM-001");
+
+    // The AGV drops off the live fleet (e.g. simulator stops) while still selected.
+    useFleetStore.setState({ agvs: {} });
+
+    const state = useFleetStore.getState();
+    // The selection persists, but the card's `open` = a live AGV under that serial, which
+    // is now absent — so the card collapses gracefully instead of showing stale detail.
+    expect(state.trackedAgvSerial).toBe("SIM-001");
+    expect(state.agvs[state.trackedAgvSerial!]).toBeUndefined();
   });
 });
 

@@ -128,6 +128,10 @@ export function findEdge(map: MapDocument, from: string, to: string): MapEdge | 
   return map.edges.find((edgeItem) => edgeItem.from === from && edgeItem.to === to);
 }
 
+export function findEdgeById(map: MapDocument, edgeId: string): MapEdge | undefined {
+  return map.edges.find((edgeItem) => edgeItem.id === edgeId);
+}
+
 export function validateRoute(map: MapDocument, routeNodeIds: string[]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   if (routeNodeIds.length < 2) {
@@ -191,3 +195,4 @@ export function slugify(value: string): string {
 export type { EdgeTrajectory, MapDocument, MapEdge, MapNode, OrientationType, RouteDocument, ValidationIssue } from "./types";
 export * from "./ids";
 export * from "./trajectory";
+export * from "./operations";

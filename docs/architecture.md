@@ -26,7 +26,7 @@ monorepo (`apps/*`, `packages/*`), all TypeScript/ESM. `npm start` runs the whol
 
 | Workspace | Role | Internal structure |
 |-----------|------|--------------------|
-| `packages/core` (`@agv/core`) | **Pure domain** — map model, geometry, LIF I/O, VDA orders. No I/O, no framework. | `map/` (+ `map/trajectory.ts` bézier math), `lif/`, `vda/` |
+| `packages/core` (`@agv/core`) | **Pure domain** — map model, geometry, LIF I/O, VDA orders. No I/O, no framework. | `map/` (model + `trajectory.ts` bézier math + `operations.ts` composable map transforms), `lif/`, `vda/` |
 | `apps/server` | Fastify REST + WebSocket hub + VDA 5050 master client. **Ports & adapters.** | `domain/ports.ts`, `infra/`, `services/`, `routes/` |
 | `apps/simulator` | Dummy AGV runtime: motion + state over MQTT. | `config/`, `runtime/`, `services/`, `simulation/`, `transport/` |
 | `apps/broker` | Local Aedes MQTT broker for dev. | `runtime.ts` |
@@ -48,10 +48,13 @@ monorepo (`apps/*`, `packages/*`), all TypeScript/ESM. `npm start` runs the whol
 ## State
 
 Three zustand stores, each one responsibility:
-[`editor-store`](../apps/web/src/stores/editor-store.ts) (map document + editor UI),
+[`editor-store`](../apps/web/src/stores/editor-store.ts) (map document + editor UI — a thin barrel
+combining focused slices under [`stores/editor/`](../apps/web/src/stores/editor)),
 [`route-store`](../apps/web/src/stores/route-store.ts) (routes + draft),
 [`fleet-store`](../apps/web/src/stores/fleet-store.ts) (realtime AGV state + order statuses).
-Stores hold state transitions and delegate domain operations to `@agv/core`.
+Stores hold state transitions and delegate domain operations to `@agv/core`: editor map edits
+compose the pure transforms in [`map/operations.ts`](../packages/core/src/map/operations.ts) and
+stamp `updatedAt` through a single helper (`stampMap`).
 
 ## Testing
 

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import {
   Download,
   Image,
@@ -7,24 +6,23 @@ import {
   Maximize2,
   MousePointer2,
   Plus,
-  RotateCcw,
   Save,
   Trash2,
   Unlock,
   Upload,
 } from "lucide-react";
-import type { EditorBackgroundImage, Selection, Tool } from "../../types";
+import type { EditorBackgroundImage, Tool } from "../../types";
 import { ToolButton } from "../toolbar/ToolButton";
 
-export function MapCommandPanelView(props: {
+/**
+ * Persistent left column of the Map tab: Map Tools, the Background section, and the
+ * global Map Commands. Selection-scoped controls (delete, add reverse edge) and the
+ * Inspector live in the floating card on the right, not here.
+ */
+export function MapLeftPanelView(props: {
   tool: Tool;
-  selection: Selection;
   backgroundImage: EditorBackgroundImage | null;
-  canAddReverseEdge: boolean;
-  inspector: ReactNode;
   onSetTool: (tool: Tool) => void;
-  onDeleteSelection: () => void;
-  onAddReverseEdge: () => void;
   onSave: () => void;
   onExport: () => void;
   onImport: (file: File) => void;
@@ -35,7 +33,7 @@ export function MapCommandPanelView(props: {
   onRemoveBackground: () => void;
 }) {
   return (
-    <aside className="right-panel command-panel">
+    <aside className="left-panel command-panel">
       <section>
         <h2>Map Tools</h2>
         <div className="tool-grid">
@@ -43,7 +41,6 @@ export function MapCommandPanelView(props: {
           <ToolButton active={props.tool === "node"} title="Add node" onClick={() => props.onSetTool("node")} icon={<Plus />} />
           <ToolButton active={props.tool === "edge"} title="Add one-way edge" onClick={() => props.onSetTool("edge")} icon={<Link />} />
           <ToolButton active={props.tool === "background"} title="Move and scale background" onClick={() => props.onSetTool("background")} icon={<Image />} disabled={!props.backgroundImage} />
-          <ToolButton active={false} title="Add reverse edge" onClick={props.onAddReverseEdge} icon={<RotateCcw />} disabled={!props.canAddReverseEdge} />
         </div>
       </section>
 
@@ -98,9 +95,6 @@ export function MapCommandPanelView(props: {
       <section>
         <h2>Map Commands</h2>
         <div className="command-stack">
-          <button className="secondary-button" type="button" onClick={props.onDeleteSelection} disabled={!props.selection}>
-            <Trash2 /> Delete selection
-          </button>
           <button className="secondary-button" type="button" onClick={props.onSave}>
             <Save /> Save map
           </button>
@@ -122,8 +116,6 @@ export function MapCommandPanelView(props: {
           </button>
         </div>
       </section>
-
-      {props.inspector}
     </aside>
   );
 }

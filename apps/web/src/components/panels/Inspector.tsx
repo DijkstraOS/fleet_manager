@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { findEdge } from "@agv/core";
+import { findEdge, findEdgeById, findNode } from "@agv/core";
 import { useEditorStore } from "../../stores/editor-store";
 import { InspectorView } from "./InspectorView";
 
@@ -14,8 +14,8 @@ export function InspectorPanel() {
   const straightenSelectedEdge = useEditorStore((state) => state.straightenSelectedEdge);
   const bifurcateSelectedEdge = useEditorStore((state) => state.bifurcateSelectedEdge);
   const updateSelectedEdgeCurveHandle = useEditorStore((state) => state.updateSelectedEdgeCurveHandle);
-  const node = selection?.type === "node" ? map.nodes.find((item) => item.id === selection.id) : null;
-  const edge = selection?.type === "edge" ? map.edges.find((item) => item.id === selection.id) : null;
+  const node = selection?.type === "node" ? findNode(map, selection.id) : null;
+  const edge = selection?.type === "edge" ? findEdgeById(map, selection.id) : null;
   const hasReverseEdge = Boolean(edge && findEdge(map, edge.to, edge.from));
 
   useEffect(() => {

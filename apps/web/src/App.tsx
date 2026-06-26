@@ -1,7 +1,10 @@
 import { MapCanvas } from "./components/editor/MapCanvas";
-import { MapCommandPanel } from "./components/panels/MapCommandPanel";
-import { RouteWorkspacePanel } from "./components/panels/RouteWorkspacePanel";
-import { TrackingPanel } from "./components/panels/TrackingPanel";
+import { MapInspectorCard } from "./components/panels/MapInspectorCard";
+import { MapLeftPanel } from "./components/panels/MapLeftPanel";
+import { RouteEditorCard } from "./components/panels/RouteEditorCard";
+import { RouteLeftPanel } from "./components/panels/RouteLeftPanel";
+import { TrackingDetailCard } from "./components/panels/TrackingDetailCard";
+import { TrackingLeftPanel } from "./components/panels/TrackingLeftPanel";
 import { TopBar } from "./components/toolbar/TopBar";
 import { useAppLifecycle } from "./hooks/useAppLifecycle";
 import { useEditorStore } from "./stores/editor-store";
@@ -14,10 +17,13 @@ export default function App() {
     <div className="app-shell">
       <TopBar />
       <main className={`workspace ${workspaceMode}-workspace`}>
-        {workspaceMode === "routes" && <RouteWorkspacePanel />}
-        {workspaceMode === "tracking" && <TrackingPanel />}
+        {workspaceMode === "map" && <MapLeftPanel />}
+        {workspaceMode === "routes" && <RouteLeftPanel />}
+        {workspaceMode === "tracking" && <TrackingLeftPanel />}
         <MapCanvas />
-        {workspaceMode === "map" && <MapCommandPanel />}
+        {workspaceMode === "map" && <MapInspectorCard />}
+        {workspaceMode === "routes" && <RouteEditorCard />}
+        {workspaceMode === "tracking" && <TrackingDetailCard />}
       </main>
     </div>
   );
