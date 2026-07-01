@@ -34,9 +34,7 @@ export interface MapEdge {
 
 /**
  * The finite factory floor the map lives on, in meters. The floor spans world
- * `(0,0)` (top-left origin) to `(width, height)`, with +X right / +Y down — the
- * same orientation the simulator and trajectory headings already assume, so no
- * axis is ever flipped. All valid node coordinates are non-negative.
+ * `(0,0)` (top-left origin) to `(width, height)`, with +X right / +Y down.
  */
 export interface CanvasSize {
   width: number;

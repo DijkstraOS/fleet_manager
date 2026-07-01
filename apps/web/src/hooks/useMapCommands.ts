@@ -8,17 +8,18 @@ import {
 import { useEditorStore } from "../stores/editor-store";
 
 export function useMapCommands() {
-  const map = useEditorStore((state) => state.map);
   const setMapDocument = useEditorStore((state) => state.setMapDocument);
   const setStatus = useEditorStore((state) => state.setStatus);
   const attachBackgroundImage = useEditorStore((state) => state.attachBackgroundImage);
 
+  // Read `map` via getState() at click time; don't subscribe to it, or the caller re-renders on every map edit.
   return {
     saveMap: async () => {
-      const saved = await saveMapDocument(map);
+      const saved = await saveMapDocument(useEditorStore.getState().map);
       setMapDocument(saved, `Saved ${saved.name}.`, { preserveBackground: true });
     },
     exportMap: async () => {
+      const map = useEditorStore.getState().map;
       const lif = await exportLif(map.id).catch(() => exportLifDocument(map));
       downloadJson(`${map.id}.lif.json`, lif);
     },

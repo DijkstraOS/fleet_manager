@@ -57,9 +57,6 @@ interface CurveOptions {
   reverseUpdater?: (edge: MapEdge, from: MapNode, to: MapNode, selectedEdge: MapEdge) => MapEdge;
 }
 
-// Applies a trajectory updater to the selected edge (and, when requested, its
-// reverse) as one atomic map write — or a no-op patch when there is no
-// actionable selection.
 function curveUpdate(
   state: EditorState,
   updater: (edge: MapEdge, from: MapNode, to: MapNode) => MapEdge,
@@ -74,8 +71,6 @@ function curveUpdate(
   };
 }
 
-// The selected edge after `updater`, plus its reverse when the options opt in —
-// or null when there is nothing actionable to update.
 function selectedCurveEdges(
   state: EditorState,
   updater: (edge: MapEdge, from: MapNode, to: MapNode) => MapEdge,

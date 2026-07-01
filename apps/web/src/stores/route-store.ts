@@ -35,16 +35,12 @@ export interface RouteEditorState {
   draftName: string;
   draftNodeIds: string[];
   status: string;
-  /** Whether a route is being edited — a saved route is selected or a new draft was started.
-   *  Drives the right-zone editor card's open state; false collapses it. */
   draftActive: boolean;
   setRoutes: (routes: RouteDocument[]) => void;
   startNewRoute: () => void;
   selectRoute: (routeId: string) => void;
-  /** Deselect the active route and collapse the editor card (the close affordance). */
   closeEditor: () => void;
   setDraftName: (name: string) => void;
-  setDraftNodeIds: (nodeIds: string[]) => void;
   addDraftNode: (map: MapDocument, nodeId: string) => void;
   removeLastDraftNode: () => void;
   clearDraft: () => void;
@@ -94,7 +90,6 @@ export const useRouteStore = create<RouteEditorState>((set, get) => ({
   }),
 
   setDraftName: (draftName) => set({ draftName }),
-  setDraftNodeIds: (draftNodeIds) => set({ draftNodeIds }),
 
   addDraftNode: (map, nodeId) => set((state) => {
     const last = state.draftNodeIds[state.draftNodeIds.length - 1];

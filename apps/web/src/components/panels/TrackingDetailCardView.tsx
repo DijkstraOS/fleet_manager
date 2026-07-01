@@ -1,10 +1,5 @@
 import { Circle } from "lucide-react";
-import type { VdaState } from "@agv/core";
-
-export interface TrackingDetailAgv {
-  serialNumber: string;
-  state: VdaState | null;
-}
+import type { PanelAgv } from "./types";
 
 export interface TrackingDetailOrderStatus {
   orderId: string;
@@ -15,14 +10,8 @@ export interface TrackingDetailOrderStatus {
   reason?: string;
 }
 
-/**
- * Body of the Tracking tab's right floating card: the selected AGV's detail — Status,
- * Battery, Route, Order, and Order status. Relocated as-is from the old left panel; the
- * card title and close button are supplied by the FloatingCard shell. Presentational; no
- * store/service imports.
- */
 export function TrackingDetailCardView(props: {
-  agv: TrackingDetailAgv;
+  agv: PanelAgv;
   order: TrackingDetailOrderStatus | null;
 }) {
   const currentOrderId = props.agv.state?.orderId || props.order?.orderId || "";

@@ -14,13 +14,17 @@
     "pretest": "npm run architecture:check",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "perf:bench": "vitest bench --run tests/perf --outputJson docs/perf-baseline.json",
     "architecture:check": "node scripts/check-architecture.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^22.15.21",
     "concurrently": "^9.1.2",
     "esbuild": "^0.25.12",
+    "jsdom": "^26.1.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"

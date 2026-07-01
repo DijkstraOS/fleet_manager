@@ -1,4 +1,4 @@
-import { buildVdaOrder, createDemoMap, createEmptyMap, DEFAULT_CANVAS_SIZE, isSupportedQuadraticBezier } from "@agv/core";
+import { buildVdaOrder, createDemoMap, createEmptyMap, isSupportedQuadraticBezier } from "@agv/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useEditorStore } from "../editor-store";
 
@@ -12,7 +12,6 @@ describe("editor store", () => {
       heightAspectLocked: true,
       selection: null,
       edgeStartNodeId: null,
-      routeNodeIds: [],
       dragNodeId: null,
       viewport: null,
       status: "Loading map...",
@@ -62,7 +61,7 @@ describe("editor store", () => {
     expect(useEditorStore.getState().map.edges.map((edge) => `${edge.from}->${edge.to}`)).toEqual(["a->b", "b->a"]);
   });
 
-  it("reshapes the floor to the image aspect on attach and reverts it on remove", () => {
+  it("reshapes the floor to the image aspect on attach and keeps it on remove", () => {
     const widthBefore = useEditorStore.getState().map.canvas.width;
     const store = useEditorStore.getState();
     store.attachBackgroundImage({
@@ -76,19 +75,16 @@ describe("editor store", () => {
     const attached = useEditorStore.getState().backgroundImage;
     expect(attached?.fileName).toBe("plant.svg");
     expect(attached?.opacity).toBe(0.65);
-    // The floor adopts the image aspect: width unchanged, height = width / (200/100).
     expect(useEditorStore.getState().map.canvas).toEqual({ width: widthBefore, height: widthBefore / 2 });
 
     useEditorStore.getState().setBackgroundImageOpacity(0.25);
     expect(useEditorStore.getState().backgroundImage?.opacity).toBe(0.25);
-    // Opacity is clamped to [0, 1].
     useEditorStore.getState().setBackgroundImageOpacity(5);
     expect(useEditorStore.getState().backgroundImage?.opacity).toBe(1);
 
     useEditorStore.getState().removeBackgroundImage();
     expect(useEditorStore.getState().backgroundImage).toBeNull();
-    // Removing the image reverts the floor to the default square floor.
-    expect(useEditorStore.getState().map.canvas).toEqual(DEFAULT_CANVAS_SIZE);
+    expect(useEditorStore.getState().map.canvas).toEqual({ width: widthBefore, height: widthBefore / 2 });
   });
 
   it("calibrates the floor width, rescaling nodes so LIF export is to-scale", () => {
@@ -149,13 +145,36 @@ describe("editor store", () => {
     expect(useEditorStore.getState().map.canvas).toEqual({ width: 300, height: 200 });
   });
 
-  it("selects a connected route node by node", () => {
-    const store = useEditorStore.getState();
+  it("keeps calibrated node coordinates when the background image is removed", () => {
+    const map = {
+      ...createEmptyMap("Plan"),
+      nodes: [{ id: "n", label: "N", x: 50, y: 120 }],
+    };
+    useEditorStore.setState({ map, backgroundImage: null });
 
-    store.addRouteNode("dock-a");
-    useEditorStore.getState().addRouteNode("corr-1");
+    useEditorStore.getState().attachBackgroundImage({
+      src: "data:image/svg+xml;charset=utf-8,%3Csvg%20viewBox%3D%220%200%20200%20100%22%3E%3C%2Fsvg%3E",
+      fileName: "plant.svg",
+      mediaType: "image/svg+xml",
+      naturalWidth: 200,
+      naturalHeight: 100,
+    });
+    // Calibrate to real-world meters: width 50 → floor 50×25 (aspect-locked).
+    useEditorStore.getState().setCanvasWidth(50);
 
-    expect(useEditorStore.getState().routeNodeIds).toEqual(["dock-a", "corr-1"]);
+    const calibrated = useEditorStore.getState().map;
+    expect(calibrated.canvas).toEqual({ width: 50, height: 25 });
+    const calibratedNode = calibrated.nodes.find((node) => node.id === "n")!;
+
+    useEditorStore.getState().removeBackgroundImage();
+
+    // Removing the visual basemap must not resize the floor or move calibrated nodes.
+    const after = useEditorStore.getState().map;
+    expect(after.canvas).toEqual({ width: 50, height: 25 });
+    const afterNode = after.nodes.find((node) => node.id === "n")!;
+    expect(afterNode.x).toBeCloseTo(calibratedNode.x, 10);
+    expect(afterNode.y).toBeCloseTo(calibratedNode.y, 10);
+    expect(useEditorStore.getState().backgroundImage).toBeNull();
   });
 
   it("creates, updates, resets, straightens, and syncs edge curves", () => {
@@ -194,13 +213,11 @@ describe("editor store", () => {
     let reverse = useEditorStore.getState().map.edges.find((edge) => edge.from === "corr-1" && edge.to === "dock-a")!;
     expect(isSupportedQuadraticBezier(forward.trajectory)).toBe(true);
     expect(isSupportedQuadraticBezier(reverse.trajectory)).toBe(true);
-    // dock-a (92.5,95) -> corr-1 (97.5,95) on the floor-centered demo; the default
-    // handle bulges 1.25 m off the midpoint.
     expect(forward.trajectory?.controlPoints).toMatchObject([
-      { x: 92.5, y: 95 },
-      { x: 95, y: 96.25 },
-      { x: 97.5, y: 95 },
-    ]);
+    { x: 92.5, y: 95 },
+    { x: 95, y: 96.25 },
+    { x: 97.5, y: 95 },
+  ]);
     expect(reverse.trajectory?.controlPoints).toMatchObject([
       { x: 97.5, y: 95 },
       { x: 95, y: 96.25 },
@@ -340,14 +357,12 @@ describe("editor store", () => {
     expect(next.status).toBe("Reset unsupported imported trajectory before bifurcating this edge.");
   });
 
-  it("updates node ids and keeps edges and route references aligned", () => {
+  it("updates node ids and keeps edges aligned", () => {
     const store = useEditorStore.getState();
-    store.addRouteNode("dock-a");
     store.selectNode("dock-a");
     store.updateNode({ ...store.map.nodes[0]!, id: "dock-alpha" });
 
     const next = useEditorStore.getState();
-    expect(next.routeNodeIds).toEqual(["dock-alpha"]);
     expect(next.map.edges.some((edge) => edge.from === "dock-alpha")).toBe(true);
   });
 

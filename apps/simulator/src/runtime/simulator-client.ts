@@ -1,7 +1,6 @@
-import { delay, formatError, type MapDocument } from "@agv/core";
-import type { SimulatedAgv } from "../simulation";
+import { retryUntil, type MapDocument } from "@agv/core";
 import { createMapClient, type MapClient } from "../services/map-client";
-import { createSimulatorFleet } from "../services/simulator-fleet";
+import { createSimulatorFleet, type SimulatorFleet } from "../services/simulator-fleet";
 import { createMqttSimulatorTransport } from "../transport/mqtt-simulator-transport";
 import { createSimulatorLoop } from "./simulator-loop";
 import { buildStartupAgvCommands } from "./startup-agvs";
@@ -23,7 +22,6 @@ export interface SimulatorClientOptions {
 export interface SimulatorClientRuntime {
   start: () => Promise<void>;
   stop: () => Promise<void>;
-  listAgvs: () => SimulatedAgv[];
 }
 
 export function createSimulatorClient(options: SimulatorClientOptions = {}): SimulatorClientRuntime {
@@ -36,7 +34,7 @@ export function createSimulatorClient(options: SimulatorClientOptions = {}): Sim
   const startNodes = options.startNodes ?? [];
   const logger = options.log === false ? null : options.log ?? console;
   const mapClient = options.mapClient ?? createMapClient(serverUrl);
-  let fleet = createSimulatorFleet({ publisher: nullPublisher, log: logger });
+  let fleet: SimulatorFleet;
 
   const transport = createMqttSimulatorTransport({
     mqttBroker,
@@ -73,24 +71,14 @@ export function createSimulatorClient(options: SimulatorClientOptions = {}): Sim
       fleet.shutdown();
       await transport.stop();
     },
-    listAgvs: () => fleet.listAgvs(),
   };
 }
 
-async function loadMapWithRetry(mapClient: MapClient, mapId?: string, timeoutMs = 30_000): Promise<MapDocument> {
-  const startedAt = Date.now();
-  let lastError: unknown;
-
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      return await loadMap(mapClient, mapId);
-    } catch (error) {
-      lastError = error;
-      await delay(250);
-    }
-  }
-
-  throw new Error(`Could not load simulator map within ${timeoutMs}ms: ${formatError(lastError)}`);
+function loadMapWithRetry(mapClient: MapClient, mapId?: string, timeoutMs = 30_000): Promise<MapDocument> {
+  return retryUntil(() => loadMap(mapClient, mapId), {
+    timeoutMs,
+    describe: "Could not load simulator map",
+  });
 }
 
 async function loadMap(mapClient: MapClient, mapId?: string): Promise<MapDocument> {
@@ -100,9 +88,3 @@ async function loadMap(mapClient: MapClient, mapId?: string): Promise<MapDocumen
   if (!first) throw new Error("No maps available for simulator startup.");
   return mapClient.getMap(first.id);
 }
-
-const nullPublisher = {
-  publishAgv: () => {},
-  publishConnection: () => {},
-  publishOrderStatus: () => {},
-};

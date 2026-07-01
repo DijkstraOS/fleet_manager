@@ -1,5 +1,5 @@
 import mqtt, { type MqttClient } from "mqtt";
-import { VDA_5050_VERSION, delay, formatError, type ConnectionStatus, type VdaOrder, type VdaPublishedOrder, type VdaState, type VdaVisualization } from "@agv/core";
+import { VDA_5050_VERSION, retryUntil, type ConnectionStatus, type VdaOrder, type VdaPublishedOrder, type VdaState, type VdaVisualization } from "@agv/core";
 import { ConnectionState as VdaConnectionState, MasterControlClient, Topic, type AgvId } from "vda-5050-lib";
 import type { FleetGateway, KnownAgv } from "../domain/ports";
 
@@ -120,21 +120,11 @@ export function createMqttFleetGateway(options: MqttFleetGatewayOptions): MqttFl
   };
 }
 
-async function waitForMqttBroker(brokerUrl: string, timeoutMs = 30_000): Promise<void> {
-  const startedAt = Date.now();
-  let lastError: unknown;
-
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      await probeMqttBroker(brokerUrl);
-      return;
-    } catch (error) {
-      lastError = error;
-      await delay(250);
-    }
-  }
-
-  throw new Error(`MQTT broker ${brokerUrl} was not reachable within ${timeoutMs}ms: ${formatError(lastError)}`);
+function waitForMqttBroker(brokerUrl: string, timeoutMs = 30_000): Promise<void> {
+  return retryUntil(() => probeMqttBroker(brokerUrl), {
+    timeoutMs,
+    describe: `MQTT broker ${brokerUrl} was not reachable`,
+  });
 }
 
 function probeMqttBroker(brokerUrl: string): Promise<void> {

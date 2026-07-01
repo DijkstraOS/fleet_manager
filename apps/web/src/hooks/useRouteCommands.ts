@@ -22,7 +22,6 @@ export function useRouteCommands(options: {
   const map = useEditorStore((state) => state.map);
   const mapId = map.id;
   const selectedAgvSerial = useFleetStore((state) => state.selectedAgvSerial);
-  const setOrderStatus = useFleetStore((state) => state.setOrderStatus);
   const routes = useRouteStore((state) => state.routes);
   const selectedRouteId = useRouteStore((state) => state.selectedRouteId);
   const draftRouteName = useRouteStore((state) => state.draftName);
@@ -77,10 +76,8 @@ export function useRouteCommands(options: {
           ...(sendOptions?.loop ? { loop: true } : {}),
         });
         const sentLabel = sendOptions?.loop ? "Loop started" : "Order sent";
-        setOrderStatus(response.ok ? `${sentLabel} for ${agv.serialNumber}.` : "Order failed.");
         setRouteStatus(response.ok ? `${sentLabel}: ${draftRouteName} to ${agv.serialNumber}.` : "Order failed.");
       } catch (error) {
-        setOrderStatus("Order failed.");
         setRouteStatus(error instanceof Error ? error.message : "Order failed.");
       }
     },
@@ -95,10 +92,8 @@ export function useRouteCommands(options: {
         const message = response.stopped
           ? `Stopped loop for ${serialNumber}.`
           : `No active loop for ${serialNumber}.`;
-        setOrderStatus(message);
         setRouteStatus(message);
       } catch (error) {
-        setOrderStatus("Could not stop loop.");
         setRouteStatus(error instanceof Error ? error.message : "Could not stop loop.");
       }
     },

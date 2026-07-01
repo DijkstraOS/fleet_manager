@@ -1,35 +1,29 @@
-import type { PointerEvent, RefObject } from "react";
+import { memo, type PointerEvent, type RefObject } from "react";
 import {
-  getSupportNodeIds,
+  isSupportNode,
   nodeHasLabel,
   getQuadraticBezierHandle,
   isSupportedQuadraticBezier,
   type CanvasSize,
   type MapDocument,
-  type MapEdge,
+  type MapIndex,
   type MapNode,
-  type VdaState,
-  type VdaVisualization,
 } from "@agv/core";
 import { LocateFixed, Minus, Plus } from "lucide-react";
 import {
   CURVE_HANDLE_RADIUS,
   arrowStandoffPoint,
   nodeRenderRadius,
-  routeContainsEdge,
   type CanvasBounds,
 } from "../../lib/geometry";
 import type { EditorBackgroundImage, Selection, WorkspaceMode } from "../../types";
-
-export interface CanvasAgv {
-  serialNumber: string;
-  state: VdaState | null;
-  visualization: VdaVisualization | null;
-}
+import { useRenderTally } from "../../lib/render-tally";
+import { AgvOverlay } from "./AgvOverlay";
 
 export interface MapCanvasViewProps {
   svgRef: RefObject<SVGSVGElement | null>;
   map: MapDocument;
+  index: MapIndex;
   bounds: CanvasBounds;
   canvas: CanvasSize;
   gridStep: number;
@@ -38,7 +32,6 @@ export interface MapCanvasViewProps {
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
-  agvs: CanvasAgv[];
   onCanvasPointerDown: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => void;
   onCanvasPointerUp: (event: PointerEvent<SVGSVGElement>) => void;
@@ -51,6 +44,7 @@ export interface MapCanvasViewProps {
 }
 
 export function MapCanvasView(props: MapCanvasViewProps) {
+  useRenderTally("MapCanvasView");
   return (
     <section className="map-stage">
       <svg
@@ -66,28 +60,18 @@ export function MapCanvasView(props: MapCanvasViewProps) {
         <FloorLayer bounds={props.bounds} canvas={props.canvas} />
         <BackgroundImageLayer backgroundImage={props.backgroundImage} canvas={props.canvas} />
         <GridLayer canvas={props.canvas} />
-        <EdgeLayer
+        <StaticGraph
           map={props.map}
-          selection={props.selection}
-          routeNodeIds={props.routeNodeIds}
-          workspaceMode={props.workspaceMode}
-          onEdgePointerDown={props.onEdgePointerDown}
-        />
-        <CurveHandleLayer
-          edges={props.map.edges}
-          selection={props.selection}
-          workspaceMode={props.workspaceMode}
-          onCurveHandlePointerDown={props.onCurveHandlePointerDown}
-        />
-        <NodeLayer
-          map={props.map}
+          index={props.index}
           selection={props.selection}
           edgeStartNodeId={props.edgeStartNodeId}
           routeNodeIds={props.routeNodeIds}
           workspaceMode={props.workspaceMode}
+          onEdgePointerDown={props.onEdgePointerDown}
+          onCurveHandlePointerDown={props.onCurveHandlePointerDown}
           onNodePointerDown={props.onNodePointerDown}
         />
-        <AgvOverlayLayer agvs={props.agvs} />
+        {props.workspaceMode !== "map" && <AgvOverlay />}
       </svg>
       <div className="canvas-controls" aria-label="Canvas zoom controls">
         <button type="button" className="icon-button" title="Zoom in" onClick={props.onZoomIn}><Plus /></button>
@@ -98,9 +82,51 @@ export function MapCanvasView(props: MapCanvasViewProps) {
   );
 }
 
+interface StaticGraphProps {
+  map: MapDocument;
+  index: MapIndex;
+  selection: Selection;
+  edgeStartNodeId: string | null;
+  routeNodeIds: string[];
+  workspaceMode: WorkspaceMode;
+  onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
+  onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => void;
+  onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
+}
+
+const StaticGraph = memo(function StaticGraph(props: StaticGraphProps) {
+  useRenderTally("StaticGraph");
+  return (
+    <>
+      <EdgeLayer
+        map={props.map}
+        index={props.index}
+        selection={props.selection}
+        routeNodeIds={props.routeNodeIds}
+        workspaceMode={props.workspaceMode}
+        onEdgePointerDown={props.onEdgePointerDown}
+      />
+      <CurveHandleLayer
+        index={props.index}
+        selection={props.selection}
+        workspaceMode={props.workspaceMode}
+        onCurveHandlePointerDown={props.onCurveHandlePointerDown}
+      />
+      <NodeLayer
+        map={props.map}
+        index={props.index}
+        selection={props.selection}
+        edgeStartNodeId={props.edgeStartNodeId}
+        routeNodeIds={props.routeNodeIds}
+        workspaceMode={props.workspaceMode}
+        onNodePointerDown={props.onNodePointerDown}
+      />
+    </>
+  );
+});
+
 function CanvasDefs(props: { canvas: CanvasSize; gridStep: number }) {
-  // The grid line width scales with the step so coarser grids stay crisp; the
-  // pattern is sized to the adaptive step so the line count stays legible.
+  useRenderTally("CanvasDefs");
   const strokeWidth = props.gridStep * 0.015;
   return (
     <defs>
@@ -112,14 +138,10 @@ function CanvasDefs(props: { canvas: CanvasSize; gridStep: number }) {
           strokeWidth={strokeWidth}
         />
       </pattern>
-      {/* Clip the grid to the floor so lines never spill onto the letterbox margin. */}
       <clipPath id="floor-clip">
         <rect x={0} y={0} width={props.canvas.width} height={props.canvas.height} />
       </clipPath>
-      {/* Slim directional cue, same slate as the .edge stroke so the head reads as part
-          of the line. refX=10 (the viewBox tip) lands the arrow tip at the path end;
-          EdgeLayer stops arrow-bearing edges a standoff short of the target center (see
-          arrowStandoffPoint) so the tip rests against the node ring. */}
+      {/* EdgeLayer stops arrow-bearing edges a standoff short of the target center (arrowStandoffPoint) so the tip rests against the node ring. */}
       <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto">
         <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#475569" />
       </marker>
@@ -130,6 +152,7 @@ function CanvasDefs(props: { canvas: CanvasSize; gridStep: number }) {
 // The out-of-bounds margin (letterbox) reads as muted gray; the finite floor sits
 // on top as a bordered white rectangle anchored at the origin.
 function FloorLayer(props: { bounds: CanvasBounds; canvas: CanvasSize }) {
+  useRenderTally("FloorLayer");
   return (
     <g pointerEvents="none">
       <rect
@@ -145,6 +168,7 @@ function FloorLayer(props: { bounds: CanvasBounds; canvas: CanvasSize }) {
 }
 
 function GridLayer(props: { canvas: CanvasSize }) {
+  useRenderTally("GridLayer");
   return (
     <g pointerEvents="none" clipPath="url(#floor-clip)">
       <rect x={0} y={0} width={props.canvas.width} height={props.canvas.height} fill="url(#grid)" />
@@ -152,10 +176,8 @@ function GridLayer(props: { canvas: CanvasSize }) {
   );
 }
 
-// The background image redefines the floor's shape (the floor adopts its aspect),
-// so it simply fills the floor edge-to-edge. With the floor matched to the image
-// aspect, default `preserveAspectRatio` fills exactly with no distortion.
 function BackgroundImageLayer(props: { backgroundImage: EditorBackgroundImage | null; canvas: CanvasSize }) {
+  useRenderTally("BackgroundImageLayer");
   const backgroundImage = props.backgroundImage;
   if (!backgroundImage) return null;
   return (
@@ -175,37 +197,26 @@ function BackgroundImageLayer(props: { backgroundImage: EditorBackgroundImage | 
 
 function EdgeLayer(props: {
   map: MapDocument;
+  index: MapIndex;
   selection: Selection;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
   onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => void;
 }) {
+  useRenderTally("EdgeLayer");
   const edges = props.map.edges;
-  const nodes = props.map.nodes;
-  // The arrowhead marks direction into a node that actually does something, so
-  // only edges arriving at a full node (a label OR actions) carry it; edges into
-  // a pure path-support node read as a plain segment of the route.
-  const supportNodeIds = getSupportNodeIds(props.map);
+  const routeEdgeKeys = routeEdgeKeySet(props.routeNodeIds);
   return (
     <>
       {edges.map((edge) => {
-        const from = nodes.find((node) => node.id === edge.from);
-        const to = nodes.find((node) => node.id === edge.to);
+        const from = props.index.nodeById.get(edge.from);
+        const to = props.index.nodeById.get(edge.to);
         if (!from || !to) return null;
         const active = props.selection?.type === "edge" && props.selection.id === edge.id;
-        const routeActive = routeContainsEdge(props.routeNodeIds, edge.from, edge.to);
-        const showArrow = !supportNodeIds.has(edge.to);
+        const routeActive = routeEdgeKeys.has(`${edge.from} ${edge.to}`);
+        const showArrow = !isSupportNode(to, props.index.stationNodeIds);
         const className = edgeClass(active, routeActive, props.workspaceMode, showArrow);
         const handle = getQuadraticBezierHandle(edge.trajectory);
-        // Edges run from the source node center to the target: a curve uses its
-        // Bézier path, a straight edge draws raw from->to. When an arrowhead is
-        // shown (target is an action node) the edge stops a fixed standoff short
-        // of the node center via arrowStandoffPoint, so the tip rests against the
-        // ring instead of burying at the center; edges into a support node carry
-        // no arrow and still run to the center. The standoff direction is the
-        // curve handle for a quadratic, else the source node. Forward and reverse
-        // twins intentionally overlap; the arrowhead comes from the `.edge` CSS
-        // marker-end (suppressed by `.edge.no-arrow`).
         const end = showArrow ? arrowStandoffPoint(handle ?? from, to) : to;
         return (
           <g key={edge.id} onPointerDown={(event) => props.onEdgePointerDown(event, edge.id)}>
@@ -222,13 +233,14 @@ function EdgeLayer(props: {
 }
 
 function CurveHandleLayer(props: {
-  edges: MapEdge[];
+  index: MapIndex;
   selection: Selection;
   workspaceMode: WorkspaceMode;
   onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => void;
 }) {
+  useRenderTally("CurveHandleLayer");
   if (props.workspaceMode !== "map" || props.selection?.type !== "edge") return null;
-  const edge = props.edges.find((item) => item.id === props.selection?.id);
+  const edge = props.index.edgeById.get(props.selection.id);
   if (!edge || !isSupportedQuadraticBezier(edge.trajectory)) return null;
   const handle = getQuadraticBezierHandle(edge.trajectory);
   if (!handle) return null;
@@ -245,43 +257,25 @@ function CurveHandleLayer(props: {
   );
 }
 
-function AgvOverlayLayer(props: { agvs: CanvasAgv[] }) {
-  return (
-    <g className="agv-layer" pointerEvents="none">
-      {props.agvs.map((agv) => {
-        const pos = agv.visualization?.agvPosition || agv.state?.agvPosition;
-        if (!pos) return null;
-        return (
-          <g className="agv-marker" key={agv.serialNumber} transform={`translate(${pos.x} ${pos.y}) rotate(${(pos.theta * 180) / Math.PI})`}>
-            <rect x="-0.35" y="-0.22" width="0.7" height="0.44" rx="0.07" className="agv-body" />
-            <path d="M 0.35 0 L 0.58 0.16 L 0.58 -0.16 z" className="agv-nose" />
-            <text className="agv-label" x="-0.45" y="-0.45">{agv.serialNumber}</text>
-          </g>
-        );
-      })}
-    </g>
-  );
-}
-
 function NodeLayer(props: {
   map: MapDocument;
+  index: MapIndex;
   selection: Selection;
   edgeStartNodeId: string | null;
   routeNodeIds: string[];
   workspaceMode: WorkspaceMode;
   onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => void;
 }) {
-  // Full nodes (a label OR actions) stay hefty; pure path-support nodes — no
-  // label and no actions — render as a small dot. Both keep a fixed real-world size.
-  const supportNodeIds = getSupportNodeIds(props.map);
+  useRenderTally("NodeLayer");
+  const routeNodeSet = new Set(props.routeNodeIds);
   return (
     <>
       {props.map.nodes.map((node) => {
-        const isSupport = supportNodeIds.has(node.id);
+        const isSupport = isSupportNode(node, props.index.stationNodeIds);
         const radius = nodeRenderRadius(isSupport);
         return (
           <g key={node.id} onPointerDown={(event) => props.onNodePointerDown(event, node)}>
-            <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, props.routeNodeIds, props.workspaceMode, isSupport)} cx={node.x} cy={node.y} r={radius} />
+            <circle className={nodeClass(node.id, props.selection, props.edgeStartNodeId, routeNodeSet, props.workspaceMode, isSupport)} cx={node.x} cy={node.y} r={radius} />
             {nodeHasLabel(node) && (
               <text className="node-label" x={node.x + 0.35} y={node.y - 0.35}>{node.label}</text>
             )}
@@ -301,12 +295,20 @@ function edgeClass(active: boolean, routeActive: boolean, workspaceMode: Workspa
   return classes.join(" ");
 }
 
-function nodeClass(id: string, selection: Selection, edgeStart: string | null, route: string[], workspaceMode: WorkspaceMode, isSupport: boolean) {
+function nodeClass(id: string, selection: Selection, edgeStart: string | null, routeNodeSet: ReadonlySet<string>, workspaceMode: WorkspaceMode, isSupport: boolean) {
   const classes = ["node"];
   if (isSupport) classes.push("support");
   if (workspaceMode !== "map") classes.push("subtle");
   if (selection?.type === "node" && selection.id === id) classes.push("active");
   if (edgeStart === id) classes.push("edge-start");
-  if (route.includes(id)) classes.push("route");
+  if (routeNodeSet.has(id)) classes.push("route");
   return classes.join(" ");
+}
+
+function routeEdgeKeySet(route: string[]): Set<string> {
+  const keys = new Set<string>();
+  for (let index = 0; index < route.length - 1; index += 1) {
+    keys.add(`${route[index]} ${route[index + 1]}`);
+  }
+  return keys;
 }

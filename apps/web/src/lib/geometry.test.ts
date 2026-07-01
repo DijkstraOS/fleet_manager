@@ -11,7 +11,7 @@ import {
 } from "./geometry";
 
 describe("viewport geometry", () => {
-  // A floor large enough that this zoom stays within the floor-relative clamp.
+  // Keep large: a smaller floor trips the clamp and breaks the anchor-zoom test.
   const canvas = { width: 200, height: 100 };
 
   it("zooms around the provided anchor point", () => {
@@ -30,7 +30,6 @@ describe("viewport geometry", () => {
 
     const next = zoomViewport(viewport, { x: 100, y: 50 }, 100, canvas);
 
-    // Capped at the floor width (plus a small breathing margin), centered.
     expect(next.width).toBeGreaterThan(200);
     expect(next.width).toBeLessThan(230);
     expect(next.x).toBeCloseTo((200 - next.width) / 2, 6);
@@ -53,14 +52,13 @@ describe("nodeRenderRadius", () => {
 
 describe("arrowStandoffPoint", () => {
   it("pulls the endpoint back from the target by the standoff", () => {
-    // Edge arriving horizontally from the left at the node (4, 0).
     const point = arrowStandoffPoint({ x: 0, y: 0 }, { x: 4, y: 0 });
     expect(point.x).toBeCloseTo(4 - ARROW_NODE_STANDOFF, 10);
     expect(point.y).toBeCloseTo(0, 10);
   });
 
   it("keeps the result on the approach->target line for an angled edge", () => {
-    const point = arrowStandoffPoint({ x: 0, y: 0 }, { x: 3, y: 4 }); // length 5
+    const point = arrowStandoffPoint({ x: 0, y: 0 }, { x: 3, y: 4 });
     const ratio = (5 - ARROW_NODE_STANDOFF) / 5;
     expect(point.x).toBeCloseTo(3 * ratio, 10);
     expect(point.y).toBeCloseTo(4 * ratio, 10);
@@ -81,8 +79,6 @@ describe("snap", () => {
   });
 
   it("produces clean increments with no floating-point dust", () => {
-    // Use toBe (exact equality), not toBeCloseTo: the whole point of rounding via
-    // integers is that 0.3 is literally 0.3, not 0.30000000000000004.
     expect(snap(0.3)).toBe(0.3);
     expect(snap(1.7)).toBe(1.7);
     expect(snap(2.9)).toBe(2.9);
@@ -133,4 +129,3 @@ describe("wheelZoomScale", () => {
     expect(huge).toBe(clampedReference);
   });
 });
-

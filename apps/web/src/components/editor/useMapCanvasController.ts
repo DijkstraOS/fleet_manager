@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, type PointerEvent } from "react";
-import { fitViewportToContent, gridStepForViewport, type MapNode } from "@agv/core";
+import { useCallback, useEffect, useMemo, useRef, type PointerEvent } from "react";
+import { fitViewportToContent, gridStepForViewport, buildMapIndex, type MapNode } from "@agv/core";
 import { panViewport, screenToWorld, screenToWorldRaw, wheelZoomScale, zoomViewport, type CanvasBounds } from "../../lib/geometry";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
@@ -16,6 +16,9 @@ interface CurveDragState {
   edgeId: string;
 }
 
+// Do NOT inline `[]`: a fresh array each render breaks StaticGraph's React.memo every pan/zoom frame.
+const EMPTY_ROUTE_NODE_IDS: string[] = [];
+
 export function useMapCanvasController() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const panRef = useRef<PanState | null>(null);
@@ -27,24 +30,45 @@ export function useMapCanvasController() {
   const selection = useEditorStore((state) => state.selection);
   const edgeStartNodeId = useEditorStore((state) => state.edgeStartNodeId);
   const viewportState = useEditorStore((state) => state.viewport);
-  const agvs = useFleetStore((state) => state.agvs);
-  const orderStatuses = useFleetStore((state) => state.orderStatuses);
   const routeNodeIds = useRouteStore((state) => state.draftNodeIds);
-  const addDraftNode = useRouteStore((state) => state.addDraftNode);
   const routes = useRouteStore((state) => state.routes);
   const addNodeAt = useEditorStore((state) => state.addNodeAt);
   const clearSelection = useEditorStore((state) => state.clearSelection);
-  const handleEdgeNode = useEditorStore((state) => state.handleEdgeNode);
-  const selectNode = useEditorStore((state) => state.selectNode);
-  const selectEdge = useEditorStore((state) => state.selectEdge);
-  const beginDragNode = useEditorStore((state) => state.beginDragNode);
   const dragNodeTo = useEditorStore((state) => state.dragNodeTo);
   const endDragNode = useEditorStore((state) => state.endDragNode);
   const setViewport = useEditorStore((state) => state.setViewport);
   const updateSelectedEdgeCurveHandle = useEditorStore((state) => state.updateSelectedEdgeCurveHandle);
-  // The viewBox aspect must match the SVG's pixel aspect so the floor renders
-  // square-on-square without stretching; fall back to the floor aspect before the
-  // element is mounted (first render) or measurable.
+
+  const onNodePointerDown = useCallback((event: PointerEvent<SVGGElement>, node: MapNode) => {
+    event.stopPropagation();
+    const editor = useEditorStore.getState();
+    if (editor.workspaceMode === "tracking") return;
+    if (editor.workspaceMode === "routes") {
+      useRouteStore.getState().addDraftNode(editor.map, node.id);
+      return;
+    }
+    if (editor.tool === "edge") {
+      editor.handleEdgeNode(node.id);
+      return;
+    }
+    editor.selectNode(node.id);
+    if (editor.tool === "select") editor.beginDragNode(node.id);
+  }, []);
+  const onEdgePointerDown = useCallback((event: PointerEvent<SVGGElement>, edgeId: string) => {
+    event.stopPropagation();
+    const editor = useEditorStore.getState();
+    if (editor.workspaceMode !== "map") return;
+    editor.selectEdge(edgeId);
+  }, []);
+  const onCurveHandlePointerDown = useCallback((event: PointerEvent<SVGCircleElement>, edgeId: string) => {
+    event.stopPropagation();
+    const editor = useEditorStore.getState();
+    if (editor.workspaceMode !== "map" || !svgRef.current) return;
+    editor.selectEdge(edgeId);
+    curveDragRef.current = { edgeId };
+    svgRef.current.setPointerCapture(event.pointerId);
+  }, []);
+  // viewBox aspect must equal the SVG's pixel aspect or the floor stretches; floor aspect is the fallback until the element is measurable.
   function viewportAspect(): number {
     const rect = svgRef.current?.getBoundingClientRect();
     if (rect && rect.width > 0 && rect.height > 0) return rect.width / rect.height;
@@ -54,16 +78,20 @@ export function useMapCanvasController() {
     () => fitViewportToContent(map, map.canvas.width / map.canvas.height),
     [map],
   );
+  const mapIndex = useMemo(() => buildMapIndex(map), [map]);
   const viewport = viewportState || fitBounds;
-  const trackingRouteNodeIds = useMemo(() => {
-    const activeStatus = Object.values(orderStatuses).find((status) => {
-      const agv = agvs[status.serialNumber];
-      return status.routeId && agv?.state?.driving;
-    });
-    if (!activeStatus?.routeId) return [];
-    return routes.find((route) => route.id === activeStatus.routeId)?.nodeIds || [];
-  }, [agvs, orderStatuses, routes]);
-  const visibleRouteNodeIds = workspaceMode === "tracking" ? trackingRouteNodeIds : workspaceMode === "routes" ? routeNodeIds : [];
+  const activeRouteId = useFleetStore((state) => {
+    if (workspaceMode !== "tracking") return null;
+    const activeStatus = Object.values(state.orderStatuses).find(
+      (status) => status.routeId && state.agvs[status.serialNumber]?.state?.driving,
+    );
+    return activeStatus?.routeId ?? null;
+  });
+  const trackingRouteNodeIds = useMemo(
+    () => (activeRouteId ? routes.find((route) => route.id === activeRouteId)?.nodeIds || [] : []),
+    [activeRouteId, routes],
+  );
+  const visibleRouteNodeIds = workspaceMode === "tracking" ? trackingRouteNodeIds : workspaceMode === "routes" ? routeNodeIds : EMPTY_ROUTE_NODE_IDS;
 
   function zoomAt(anchor: { x: number; y: number }, scale: number) {
     setViewport(zoomViewport(viewport, anchor, scale, map.canvas));
@@ -73,10 +101,7 @@ export function useMapCanvasController() {
     zoomAt({ x: viewport.x + viewport.width / 2, y: viewport.y + viewport.height / 2 }, scale);
   }
 
-  // Wheel zoom is attached as a native, non-passive listener. React routes its
-  // onWheel prop through a passive listener, so event.preventDefault() there is
-  // a no-op and the browser's own scroll / pinch-zoom runs on top of ours. The
-  // ref keeps the DOM listener stable while always seeing the latest viewport.
+  // Native non-passive listener: React's onWheel is passive, so preventDefault() there is a no-op.
   const wheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
   useEffect(() => {
     wheelHandlerRef.current = (event) => {
@@ -97,16 +122,15 @@ export function useMapCanvasController() {
   return {
     svgRef,
     map,
+    index: mapIndex,
     bounds: viewport,
     canvas: map.canvas,
     gridStep: gridStepForViewport(viewport.width),
     workspaceMode,
-    tool,
     backgroundImage,
     selection,
     edgeStartNodeId,
     routeNodeIds: visibleRouteNodeIds,
-    agvs: workspaceMode === "map" ? [] : Object.values(agvs),
     onCanvasPointerDown: (event: PointerEvent<SVGSVGElement>) => {
       if (event.target !== event.currentTarget) return;
       if (workspaceMode === "map" && tool === "node" && svgRef.current) {
@@ -122,25 +146,8 @@ export function useMapCanvasController() {
       };
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    onNodePointerDown: (event: PointerEvent<SVGGElement>, node: MapNode) => {
-      event.stopPropagation();
-      if (workspaceMode === "tracking") return;
-      if (workspaceMode === "routes") {
-        addDraftNode(map, node.id);
-        return;
-      }
-      if (tool === "edge") {
-        handleEdgeNode(node.id);
-        return;
-      }
-      selectNode(node.id);
-      if (tool === "select") beginDragNode(node.id);
-    },
-    onEdgePointerDown: (event: PointerEvent<SVGGElement>, edgeId: string) => {
-      event.stopPropagation();
-      if (workspaceMode !== "map") return;
-      selectEdge(edgeId);
-    },
+    onNodePointerDown,
+    onEdgePointerDown,
     onCanvasPointerMove: (event: PointerEvent<SVGSVGElement>) => {
       if (!svgRef.current) return;
       if (curveDragRef.current) {
@@ -171,17 +178,9 @@ export function useMapCanvasController() {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    onCurveHandlePointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string) => {
-      event.stopPropagation();
-      if (workspaceMode !== "map" || !svgRef.current) return;
-      selectEdge(edgeId);
-      curveDragRef.current = { edgeId };
-      svgRef.current.setPointerCapture(event.pointerId);
-    },
+    onCurveHandlePointerDown,
     onZoomIn: () => zoomAroundCenter(0.85),
     onZoomOut: () => zoomAroundCenter(1.18),
-    // Reset to the default view (fit-to-content for a populated map, empty-floor
-    // center otherwise), measured against the real SVG aspect and floor-clamped.
     onResetView: () => setViewport(fitViewportToContent(map, viewportAspect())),
   };
 }

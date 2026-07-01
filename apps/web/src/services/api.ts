@@ -1,14 +1,5 @@
 import type { MapDocument, OrderDraft, RouteDocument } from "@agv/core";
 
-export interface AgvSnapshot {
-  serialNumber: string;
-  manufacturer: string;
-  mapId: string | null;
-  state: unknown;
-  visualization: unknown;
-  lastSeenAt: string;
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
@@ -59,10 +50,6 @@ export function deleteRoute(routeId: string) {
   return request<{ ok: boolean }>(`/api/routes/${encodeURIComponent(routeId)}`, {
     method: "DELETE",
   });
-}
-
-export function listAgvs() {
-  return request<AgvSnapshot[]>("/api/agvs");
 }
 
 export function sendOrder(draft: OrderDraft) {

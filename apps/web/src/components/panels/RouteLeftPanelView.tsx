@@ -1,26 +1,15 @@
-import { Circle, Repeat, Route } from "lucide-react";
-import type { RouteDocument, VdaState } from "@agv/core";
+import { Repeat, Route } from "lucide-react";
+import type { RouteDocument } from "@agv/core";
+import { AgvRow } from "./AgvRow";
+import type { PanelAgv } from "./types";
 
-export interface RouteActionAgv {
-  serialNumber: string;
-  state: VdaState | null;
-}
-
-/**
- * Persistent left column of the Route tab — where you find a route and act on it. The
- * saved-routes list (browse/create) is always shown; the route *actions* (Assign-AGV, the
- * loop toggle, and Send / Start-Loop / Stop-Loop) appear below it while a route is active
- * (`showActions`). Editing the route's geometry — name and node sequence — is a separate
- * concern and lives in the floating editor card on the right (RouteEditorCard).
- * Presentational; no store/service imports.
- */
 export function RouteLeftPanelView(props: {
   routes: RouteDocument[];
   selectedRouteId: string | null;
   onNewRoute: () => void;
   onSelectRoute: (routeId: string) => void;
   showActions: boolean;
-  agvs: RouteActionAgv[];
+  agvs: PanelAgv[];
   selectedAgvSerial: string | null;
   loopRoute: boolean;
   canLoopRoute: boolean;
@@ -61,18 +50,12 @@ export function RouteLeftPanelView(props: {
           <h2>Assign AGV</h2>
           {props.agvs.length === 0 && <span className="muted">No AGV online. Start the simulator app or connect an AGV.</span>}
           {props.agvs.map((agv) => (
-            <button
-              className={props.selectedAgvSerial === agv.serialNumber ? "agv-row selected" : "agv-row"}
+            <AgvRow
               key={agv.serialNumber}
-              onClick={() => props.onSelectAgv(agv.serialNumber)}
-              type="button"
-            >
-              <Circle className={agv.state?.driving ? "moving" : "idle"} />
-              <div>
-                <strong>{agv.serialNumber}</strong>
-                <span>{agv.state?.driving ? "Driving" : "Idle"} · {agv.state?.batteryState.batteryCharge ?? "--"}%</span>
-              </div>
-            </button>
+              agv={agv}
+              selected={props.selectedAgvSerial === agv.serialNumber}
+              onSelect={props.onSelectAgv}
+            />
           ))}
           <label className="checkbox-row route-loop-toggle">
             <input

@@ -11,13 +11,8 @@ import { useRouteStore } from "../stores/route-store";
 
 export function useAppLifecycle() {
   const mapId = useEditorStore((state) => state.map.id);
-  const workspaceMode = useEditorStore((state) => state.workspaceMode);
-  const selection = useEditorStore((state) => state.selection);
   const setMapDocument = useEditorStore((state) => state.setMapDocument);
   const setEditorStatus = useEditorStore((state) => state.setStatus);
-  const deleteSelection = useEditorStore((state) => state.deleteSelection);
-  const handleRealtimeMessage = useFleetStore((state) => state.handleRealtimeMessage);
-  const setRealtimeStatus = useFleetStore((state) => state.setRealtimeStatus);
   const setRoutes = useRouteStore((state) => state.setRoutes);
   const setRouteStatus = useRouteStore((state) => state.setStatus);
 
@@ -49,14 +44,17 @@ export function useAppLifecycle() {
     };
   }, [mapId, setRouteStatus, setRoutes]);
 
+  // Read fleet actions via getState(), not closures — keep deps empty so a re-render never tears down and rebuilds the socket.
   useEffect(() => connectRealtime({
-    onMessage: handleRealtimeMessage,
-    onOpen: () => setRealtimeStatus("Realtime connected."),
-    onClose: () => setRealtimeStatus("Realtime disconnected."),
-  }), [handleRealtimeMessage, setRealtimeStatus]);
+    onMessage: (message) => useFleetStore.getState().handleRealtimeMessage(message),
+    onOpen: () => useFleetStore.getState().setRealtimeStatus("Realtime connected."),
+    onClose: () => useFleetStore.getState().setRealtimeStatus("Realtime disconnected."),
+  }), []);
 
+  // Keep deps empty: adding `selection` here would re-subscribe App to selection and re-render the whole shell on every select.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      const { selection, workspaceMode, deleteSelection } = useEditorStore.getState();
       if (workspaceMode !== "map" || !selection) return;
       if (event.key !== "Delete" && event.key !== "Backspace") return;
       if (isEditableTarget(event.target)) return;
@@ -67,7 +65,7 @@ export function useAppLifecycle() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [deleteSelection, selection, workspaceMode]);
+  }, []);
 }
 
 function isEditableTarget(target: EventTarget | null) {

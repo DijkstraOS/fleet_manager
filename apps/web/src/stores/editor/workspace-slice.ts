@@ -1,4 +1,3 @@
-import { findEdge } from "@agv/core";
 import type { StateCreator } from "zustand";
 import type { CanvasBounds } from "../../lib/geometry";
 import type { Selection, Tool, WorkspaceMode } from "../../types";
@@ -9,7 +8,6 @@ export interface WorkspaceSlice {
   tool: Tool;
   selection: Selection;
   edgeStartNodeId: string | null;
-  routeNodeIds: string[];
   viewport: CanvasBounds | null;
   status: string;
   setStatus: (status: string) => void;
@@ -19,8 +17,6 @@ export interface WorkspaceSlice {
   clearSelection: () => void;
   selectNode: (nodeId: string) => void;
   selectEdge: (edgeId: string) => void;
-  addRouteNode: (nodeId: string) => void;
-  clearRoute: () => void;
 }
 
 export const createWorkspaceSlice: StateCreator<EditorState, [], [], WorkspaceSlice> = (set) => ({
@@ -28,7 +24,6 @@ export const createWorkspaceSlice: StateCreator<EditorState, [], [], WorkspaceSl
   tool: "select",
   selection: null,
   edgeStartNodeId: null,
-  routeNodeIds: [],
   viewport: null,
   status: "Loading map...",
 
@@ -54,16 +49,4 @@ export const createWorkspaceSlice: StateCreator<EditorState, [], [], WorkspaceSl
   clearSelection: () => set({ selection: null, edgeStartNodeId: null }),
   selectNode: (nodeId) => set({ selection: { type: "node", id: nodeId } }),
   selectEdge: (edgeId) => set({ selection: { type: "edge", id: edgeId } }),
-
-  addRouteNode: (nodeId) => set((state) => {
-    const last = state.routeNodeIds[state.routeNodeIds.length - 1];
-    if (!last) return { routeNodeIds: [nodeId] };
-    if (last === nodeId) return {};
-    if (!findEdge(state.map, last, nodeId)) {
-      return { status: `No directed edge from ${last} to ${nodeId}.` };
-    }
-    return { routeNodeIds: [...state.routeNodeIds, nodeId], status: "Route updated." };
-  }),
-
-  clearRoute: () => set({ routeNodeIds: [] }),
 });

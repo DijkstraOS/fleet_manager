@@ -1,13 +1,6 @@
 import { Save, Trash2, Undo2 } from "lucide-react";
 import type { ValidationIssue } from "@agv/core";
 
-/**
- * Body of the Route tab's right floating card: the route editor alone — name, node
- * sequence, and remove-last/clear/save/delete. Just the route. Assigning an AGV and
- * sending orders are route *actions* and live in the left column (RouteLeftPanel);
- * the saved-routes list (browse/create) lives there too. Presentational; no
- * store/service imports.
- */
 export function RouteEditorCardView(props: {
   selectedRouteId: string | null;
   draftRouteName: string;

@@ -239,6 +239,26 @@ export function backfillCanvas(map: MapDocument): MapDocument {
   return recenterMapOnFloor({ ...map, canvas: { ...DEFAULT_CANVAS_SIZE } });
 }
 
+/** Grows/shifts the floor so off-floor content fits; no-op when already within `[0,canvas]`. Pure translate — never scales or flips. */
+export function fitCanvasToContent(map: MapDocument): MapDocument {
+  const extents = contentExtents(map);
+  if (!extents) return map;
+  const dx = extents.minX < 0 ? -extents.minX : 0;
+  const dy = extents.minY < 0 ? -extents.minY : 0;
+  const width = Math.max(map.canvas.width, extents.maxX + dx);
+  const height = Math.max(map.canvas.height, extents.maxY + dy);
+  if (dx === 0 && dy === 0 && width === map.canvas.width && height === map.canvas.height) {
+    return map;
+  }
+  const offset = { dx, dy };
+  return {
+    ...map,
+    canvas: { width, height },
+    nodes: map.nodes.map((node) => ({ ...node, x: node.x + dx, y: node.y + dy })),
+    edges: map.edges.map((edge) => translateEdgeTrajectory(edge, offset)),
+  };
+}
+
 // Adaptive grid: as the viewport widens the 1 m grid would draw too many lines,
 // so the step climbs through this ladder. The threshold is the viewport width at
 // which the next coarser step takes over, chosen to keep the line count legible.
@@ -267,4 +287,22 @@ function nodeExtents(nodes: MapNode[]) {
     minY: Math.min(...ys),
     maxY: Math.max(...ys),
   };
+}
+
+function contentExtents(map: MapDocument) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const fold = (x: number, y: number) => {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  };
+  for (const node of map.nodes) fold(node.x, node.y);
+  for (const edge of map.edges) {
+    for (const point of edge.trajectory?.controlPoints ?? []) fold(point.x, point.y);
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
 }

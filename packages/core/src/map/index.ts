@@ -1,5 +1,6 @@
 import type { MapDocument, MapEdge, MapNode, RouteDocument, ValidationIssue } from "./types";
 import { DEFAULT_CANVAS_SIZE } from "./canvas";
+import { edgeFromToKey } from "./map-index";
 import { validateTrajectory } from "./trajectory";
 
 export function createEmptyMap(name = "Untitled Map"): MapDocument {
@@ -15,9 +16,7 @@ export function createEmptyMap(name = "Untitled Map"): MapDocument {
     edges: [],
   };
 }
-
-// The demo grid is authored around the origin (bbox (0,0)->(15,10)) then shifted
-// so its bounding box centers on the 200x200 floor (center (100,100)).
+// Offsets center the origin-authored demo grid on the floor.
 const DEMO_OFFSET_X = 92.5;
 const DEMO_OFFSET_Y = 95;
 
@@ -148,15 +147,30 @@ export function findEdgeById(map: MapDocument, edgeId: string): MapEdge | undefi
   return map.edges.find((edgeItem) => edgeItem.id === edgeId);
 }
 
-export function validateRoute(map: MapDocument, routeNodeIds: string[]): ValidationIssue[] {
+/** Resolves each route step positionally: nodes[i] is routeNodeIds[i]; edges[i] is the directed nodes[i]->nodes[i+1] edge (undefined if absent). Edge resolution is first-match-wins, mirroring findEdge. */
+export function resolveRoute(map: MapDocument, routeNodeIds: string[]): {
+  issues: ValidationIssue[];
+  nodes: (MapNode | undefined)[];
+  edges: (MapEdge | undefined)[];
+} {
   const issues: ValidationIssue[] = [];
+  const nodeById = new Map(map.nodes.map((node) => [node.id, node] as const));
+  const edgeByFromTo = new Map<string, MapEdge>();
+  for (const edgeItem of map.edges) {
+    const key = edgeFromToKey(edgeItem.from, edgeItem.to);
+    if (!edgeByFromTo.has(key)) edgeByFromTo.set(key, edgeItem);
+  }
+
+  const nodes = routeNodeIds.map((nodeId) => nodeById.get(nodeId));
+  const edges: (MapEdge | undefined)[] = [];
+
   if (routeNodeIds.length < 2) {
     issues.push({ code: "route.short", message: "Route needs at least two nodes." });
-    return issues;
+    return { issues, nodes, edges };
   }
 
   for (const nodeId of routeNodeIds) {
-    if (!findNode(map, nodeId)) {
+    if (!nodeById.has(nodeId)) {
       issues.push({ code: "route.node.missing", message: `Route references missing node ${nodeId}.` });
     }
   }
@@ -164,12 +178,18 @@ export function validateRoute(map: MapDocument, routeNodeIds: string[]): Validat
   for (let index = 0; index < routeNodeIds.length - 1; index += 1) {
     const from = routeNodeIds[index];
     const to = routeNodeIds[index + 1];
-    if (from && to && !findEdge(map, from, to)) {
+    const edgeItem = from && to ? edgeByFromTo.get(edgeFromToKey(from, to)) : undefined;
+    edges.push(edgeItem);
+    if (from && to && !edgeItem) {
       issues.push({ code: "route.edge.missing", message: `No directed edge from ${from} to ${to}.` });
     }
   }
 
-  return issues;
+  return { issues, nodes, edges };
+}
+
+export function validateRoute(map: MapDocument, routeNodeIds: string[]): ValidationIssue[] {
+  return resolveRoute(map, routeNodeIds).issues;
 }
 
 export function validateRouteDocument(map: MapDocument | undefined, route: RouteDocument): ValidationIssue[] {
@@ -213,4 +233,5 @@ export * from "./ids";
 export * from "./trajectory";
 export * from "./operations";
 export * from "./selectors";
+export * from "./map-index";
 export * from "./canvas";

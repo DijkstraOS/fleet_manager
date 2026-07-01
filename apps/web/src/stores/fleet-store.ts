@@ -25,13 +25,11 @@ export interface FleetState {
   selectedAgvSerial: string | null;
   trackedAgvSerial: string | null;
   realtimeStatus: string;
-  orderStatus: string;
   orderStatuses: Record<string, TrackedOrderStatus>;
   selectAgv: (serialNumber: string) => void;
   trackAgv: (serialNumber: string) => void;
   clearTrackedAgv: () => void;
   setRealtimeStatus: (status: string) => void;
-  setOrderStatus: (status: string) => void;
   handleRealtimeMessage: (message: Record<string, unknown>) => void;
 }
 
@@ -40,18 +38,12 @@ export const useFleetStore = create<FleetState>((set) => ({
   selectedAgvSerial: null,
   trackedAgvSerial: null,
   realtimeStatus: "Connecting realtime...",
-  orderStatus: "",
   orderStatuses: {},
 
-  // `selectedAgvSerial` is the Route tab's assign-target. `trackedAgvSerial` is the
-  // Tracking tab's selection — the AGV whose detail floats in the right card. They are
-  // independent so selecting on one tab never disturbs the other. Tracking selection is
-  // list-driven (not auto-set from realtime); the card opens only on an explicit pick.
   selectAgv: (selectedAgvSerial) => set({ selectedAgvSerial }),
   trackAgv: (trackedAgvSerial) => set({ trackedAgvSerial }),
   clearTrackedAgv: () => set({ trackedAgvSerial: null }),
   setRealtimeStatus: (realtimeStatus) => set({ realtimeStatus }),
-  setOrderStatus: (orderStatus) => set({ orderStatus }),
 
   handleRealtimeMessage: (message) => {
     if (message.type === "agv_state") {
@@ -83,14 +75,11 @@ export const useFleetStore = create<FleetState>((set) => ({
         ...(loopIteration !== undefined ? { loopIteration } : {}),
         ...(reason ? { reason } : {}),
       };
-      const label = routeName ? `${serialNumber} ${routeName}` : `${serialNumber} order ${orderId}`;
-      const reasonSuffix = reason ? ` — ${reason}` : "";
       set((state) => ({
         orderStatuses: {
           ...state.orderStatuses,
           [serialNumber]: tracked,
         },
-        orderStatus: `${label}: ${formatStatus(status, loop, loopIteration)}${reasonSuffix}`,
       }));
     }
   },
@@ -119,9 +108,4 @@ function upsertAgv(
     },
     selectedAgvSerial: state.selectedAgvSerial || serialNumber,
   }));
-}
-
-function formatStatus(status: string, loop: boolean, loopIteration?: number) {
-  if (!loop) return status;
-  return loopIteration ? `${status} · loop ${loopIteration}` : status;
 }

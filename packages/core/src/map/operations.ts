@@ -1,14 +1,7 @@
 import type { MapDocument, MapEdge, MapNode } from "./types";
 import { syncMapEdgeTrajectoryEndpoints } from "./trajectory";
 
-/**
- * A composable, pure transform on a {@link MapDocument}.
- *
- * Operations are time-free: they never stamp `updatedAt` — that is the caller's
- * job (the editor store does it once, in `stampMap`). This keeps them
- * deterministic and trivially unit-testable, and lets several be composed into
- * a single update without re-stamping.
- */
+/** A pure MapDocument transform. Do NOT stamp `updatedAt` here — the caller stamps once (store's stampMap). */
 export type MapOp = (map: MapDocument) => MapDocument;
 
 /** Apply a sequence of operations left-to-right, ignoring falsy entries. */
@@ -40,7 +33,6 @@ export function removeEdge(edgeId: string): MapOp {
   return (map) => ({ ...map, edges: map.edges.filter((edge) => edge.id !== edgeId) });
 }
 
-/** Move a node to a new position, re-syncing the endpoints of every incident curve. */
 export function moveNode(nodeId: string, x: number, y: number): MapOp {
   return (map) => {
     const nodes = map.nodes.map((node) => (node.id === nodeId ? { ...node, x, y } : node));
@@ -48,11 +40,6 @@ export function moveNode(nodeId: string, x: number, y: number): MapOp {
   };
 }
 
-/**
- * Replace a node, rewriting any edge `from`/`to` references to the new id and
- * re-syncing curve endpoints against the new node positions. Use this for node
- * edits that may change the id and/or position.
- */
 export function replaceNode(previousId: string, next: MapNode): MapOp {
   return (map) => {
     const nodes = map.nodes.map((node) => (node.id === previousId ? next : node));

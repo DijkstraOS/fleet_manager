@@ -219,17 +219,7 @@ function cloneLoopDraft(draft: OrderDraft): OrderDraft {
   };
 }
 
-/**
- * VDA5050 requires an order's first node to be the node the vehicle is currently
- * on (within its deviation range). An order that starts elsewhere can send a
- * compliant vehicle down an unexpected path -- it is the order shape that let the
- * simulated AGV teleport onto the wrong edge and shortcut its route -- so we
- * refuse to emit it toward a live vehicle. The AGV's reported `state.lastNodeId`
- * is its last reached / current node; it is `""` until the AGV reports one and
- * `state` is null until any state arrives. When we know where the AGV is, the
- * route must start there; when we don't, we publish but warn, since we cannot
- * confirm the start.
- */
+// VDA5050: an order's first node must be the vehicle's current node (within deviation). Reject a mismatch toward a live AGV; publish-but-warn when the AGV has no reported position.
 function assertOrderStartsAtAgv(agv: KnownAgv, draft: OrderDraft) {
   const start = draft.routeNodeIds[0];
   if (!start) return;

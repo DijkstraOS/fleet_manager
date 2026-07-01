@@ -153,12 +153,11 @@ export const createMapEditSlice: StateCreator<EditorState, [], [], MapEditSlice>
   endDragNode: () => set({ dragNodeId: null }),
 
   deleteSelection: () => set((state) => {
-    const { selection, routeNodeIds } = state;
+    const { selection } = state;
     if (!selection) return {};
     if (selection.type === "node") {
       return {
         selection: null,
-        routeNodeIds: routeNodeIds.filter((nodeId) => nodeId !== selection.id),
         map: stampMap(state.map, removeNode(selection.id)),
       };
     }
@@ -173,7 +172,6 @@ export const createMapEditSlice: StateCreator<EditorState, [], [], MapEditSlice>
     if (!previous) return {};
     return {
       selection: { type: "node", id: next.id },
-      routeNodeIds: state.routeNodeIds.map((nodeId) => (nodeId === previous.id ? next.id : nodeId)),
       map: stampMap(state.map, replaceNode(previous.id, next)),
     };
   }),

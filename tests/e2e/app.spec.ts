@@ -14,9 +14,7 @@ test("runs the map editor simulator path", async ({ page }) => {
   await page.keyboard.press("Backspace");
   await expect(page.locator("circle.node")).toHaveCount(initialNodes);
 
-  // Uploading a 2:1 floor plan reshapes the finite floor to the image aspect and
-  // fills it edge-to-edge: the image is anchored at the origin and the floor's
-  // height becomes half its width.
+  // Uploading a 2:1 image reshapes the finite floor to match the image's aspect ratio.
   const floorWidthBefore = await page.locator("rect.canvas-floor").getAttribute("width");
   const floorHeightBefore = await page.locator("rect.canvas-floor").getAttribute("height");
   expect(floorWidthBefore).toBe(floorHeightBefore);
@@ -27,13 +25,11 @@ test("runs the map editor simulator path", async ({ page }) => {
   });
   const backgroundImageEl = page.locator("image.background-image");
   await expect(backgroundImageEl).toHaveCount(1);
-  // The image fills the floor: same width as the (unchanged) floor, half the height.
   await expect(backgroundImageEl).toHaveAttribute("x", "0");
   await expect(backgroundImageEl).toHaveAttribute("y", "0");
   await expect(backgroundImageEl).toHaveAttribute("width", String(floorWidthBefore));
   await expect(page.locator("rect.canvas-floor")).toHaveAttribute("width", String(floorWidthBefore));
   await expect(page.locator("rect.canvas-floor")).toHaveAttribute("height", String(Number(floorWidthBefore) / 2));
-  // The move/scale handle is gone; only opacity + replace + remove remain.
   await expect(page.locator(".background-scale-handle")).toHaveCount(0);
   await expect(page.getByTitle("Move and scale background")).toHaveCount(0);
   await page.locator(".range-field input").evaluate((element) => {
@@ -44,18 +40,15 @@ test("runs the map editor simulator path", async ({ page }) => {
   });
   await expect(backgroundImageEl).toHaveAttribute("opacity", "0.35");
 
-  // Removing the image reverts the floor to the default square floor.
   await page.getByRole("button", { name: /Remove background/i }).click();
   await expect(backgroundImageEl).toHaveCount(0);
   await expect(page.locator("rect.canvas-floor")).toHaveAttribute("width", String(floorWidthBefore));
-  await expect(page.locator("rect.canvas-floor")).toHaveAttribute("height", String(floorWidthBefore));
+  await expect(page.locator("rect.canvas-floor")).toHaveAttribute("height", String(Number(floorWidthBefore) / 2));
 
   await page.getByTitle("Select and move nodes").click();
-  // Nothing selected yet: the right-edge floating card stays collapsed.
   await expect(page.locator(".floating-card")).toBeHidden();
   const viewBoxBeforeSelect = await page.locator("svg.map-svg").getAttribute("viewBox");
   await clickWorld(page, 2.5, 0.16);
-  // Selecting an edge mounts the floating card with its detail, and the map does not rescale.
   await expect(page.locator(".floating-card")).toBeVisible();
   await expect(page.locator(".floating-card").getByText("Direction")).toBeVisible();
   expect(await page.locator("svg.map-svg").getAttribute("viewBox")).toBe(viewBoxBeforeSelect);
@@ -73,7 +66,6 @@ test("runs the map editor simulator path", async ({ page }) => {
   await page.mouse.move(curveHandleBox.x + curveHandleBox.width / 2, curveHandleBox.y + curveHandleBox.height / 2 - 32);
   await page.mouse.up();
 
-  // Deselecting collapses the floating card and still does not rescale the map.
   const viewBoxBeforeDeselect = await page.locator("svg.map-svg").getAttribute("viewBox");
   await clickWorld(page, 12, 9);
   await expect(page.locator(".floating-card")).toBeHidden();
@@ -85,14 +77,10 @@ test("runs the map editor simulator path", async ({ page }) => {
   expect(afterZoom).not.toBe(beforeZoom);
 
   await page.getByRole("button", { name: "Routes", exact: true }).click();
-  // Left column shows the (empty) routes list; the right editor card stays collapsed until a
-  // route is selected or a new draft is started.
   await expect(page.locator(".route-library-panel").getByRole("heading", { name: "Routes" })).toBeVisible();
   await expect(page.getByText("Map Tools")).toBeHidden();
   await expect(page.locator(".floating-card")).toBeHidden();
 
-  // Starting a new draft floats the editor on the right; Assign-AGV + Send live in the
-  // left actions panel. The map stays centered.
   const viewBoxBeforeCard = await page.locator("svg.map-svg").getAttribute("viewBox");
   await page.getByRole("button", { name: "New", exact: true }).click();
   await expect(page.locator(".floating-card")).toBeVisible();
@@ -108,10 +96,9 @@ test("runs the map editor simulator path", async ({ page }) => {
   await page.getByRole("button", { name: /Save route/i }).click();
   const savedRow = page.locator(".route-row").filter({ hasText: "New Route" });
   await expect(savedRow).toBeVisible();
-  // The saved route stays selected, so the editor card remains open.
+  // Saving keeps the route selected.
   await expect(page.locator(".floating-card")).toBeVisible();
 
-  // Tapping the already-selected route toggles it off; tapping again re-opens it.
   await savedRow.click();
   await expect(page.locator(".floating-card")).toBeHidden();
   await expect(page.locator(".route-row.selected")).toHaveCount(0);
@@ -131,22 +118,19 @@ test("runs the map editor simulator path", async ({ page }) => {
   const orderPayload = await (await orderResponse).json();
   expect(orderPayload.order.edges[0].trajectory.degree).toBe(2);
 
-  // Closing the editor (X) deselects the route: the card collapses and the actions go away.
+  // Closing the editor (X) also deselects the route.
   await page.locator(".floating-card").getByRole("button", { name: "Close editor" }).click();
   await expect(page.locator(".floating-card")).toBeHidden();
   await expect(page.locator(".route-row.selected")).toHaveCount(0);
   await expect(page.locator(".route-library-panel").getByRole("button", { name: /Send Route/i })).toBeHidden();
 
   await page.getByRole("button", { name: "Tracking", exact: true }).click();
-  // Left column shows the AGV browse-list; the right detail card stays collapsed until an
-  // AGV is selected.
   await expect(page.locator(".tracking-panel").getByRole("heading", { name: "Fleet Tracking" })).toBeVisible();
   await expect(page.getByText("Map Tools")).toBeHidden();
   await expect(page.locator(".floating-card")).toBeHidden();
   const trackingRow = page.locator(".tracking-panel").locator(".agv-row").filter({ hasText: "SIM-001" });
   await expect(trackingRow).toBeVisible({ timeout: 15_000 });
 
-  // Selecting an AGV floats its detail on the right; the map does not rescale.
   const viewBoxBeforeTrack = await page.locator("svg.map-svg").getAttribute("viewBox");
   await trackingRow.click();
   await expect(page.locator(".floating-card")).toBeVisible();
@@ -156,12 +140,10 @@ test("runs the map editor simulator path", async ({ page }) => {
   await expect(page.locator(".floating-card").getByText("completed")).toBeVisible({ timeout: 12_000 });
   expect(await page.locator("svg.map-svg").getAttribute("viewBox")).toBe(viewBoxBeforeTrack);
 
-  // Closing the detail (X) collapses the card; the map still does not rescale.
   await page.locator(".floating-card").getByRole("button", { name: "Close editor" }).click();
   await expect(page.locator(".floating-card")).toBeHidden();
   expect(await page.locator("svg.map-svg").getAttribute("viewBox")).toBe(viewBoxBeforeTrack);
 
-  // Tapping the same AGV re-opens it; tapping it again toggles the selection back off.
   await trackingRow.click();
   await expect(page.locator(".floating-card")).toBeVisible();
   await trackingRow.click();

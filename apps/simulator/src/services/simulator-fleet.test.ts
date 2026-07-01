@@ -25,14 +25,12 @@ describe("simulator fleet order acceptance", () => {
     const fleet = createSimulatorFleet({ publisher, log: null });
     fleet.createAgv({ serialNumber: "SIM-001", manufacturer: "Simulated", map, startNodeId: "dock-a" });
 
-    // AGV is at dock-a; this order starts at corr-1.
     fleet.acceptOrder(envelope(["corr-1", "dock-a"], "bad-order"));
 
     const rejected = orderStatuses.find((status) => status.orderId === "bad-order");
     expect(rejected?.status).toBe("rejected");
     expect(rejected?.reason).toContain("corr-1");
     expect(rejected?.reason).toContain("dock-a");
-    // It was never accepted, so no "received" status and the AGV does not drive.
     expect(orderStatuses.some((status) => status.status === "received")).toBe(false);
 
     fleet.tickMotion(1000);

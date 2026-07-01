@@ -4,15 +4,11 @@ import { useRouteCommands } from "../../hooks/useRouteCommands";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFleetStore } from "../../stores/fleet-store";
 import { useRouteStore } from "../../stores/route-store";
+import { useRenderTally } from "../../lib/render-tally";
 import { RouteLeftPanelView } from "./RouteLeftPanelView";
 
-/**
- * Left-zone container for the Route tab. Owns the route *actions* — the saved-routes list
- * (browse/create) plus, while a route is active, Assign-AGV and Send / Start-Loop /
- * Stop-Loop. Editing the route's geometry lives in the right floating card
- * (RouteEditorCard); this panel only acts on the current draft/selection.
- */
 export function RouteLeftPanel() {
+  useRenderTally("RouteLeftPanel");
   const map = useEditorStore((state) => state.map);
   const agvs = useFleetStore((state) => state.agvs);
   const selectedAgvSerial = useFleetStore((state) => state.selectedAgvSerial);
@@ -27,7 +23,6 @@ export function RouteLeftPanel() {
   const closeEditor = useRouteStore((state) => state.closeEditor);
   const [loopRoute, setLoopRoute] = useState(false);
 
-  // Tapping the already-selected route toggles it off (deselect + close the editor).
   const toggleRoute = (routeId: string) =>
     routeId === selectedRouteId ? closeEditor() : selectRoute(routeId);
 

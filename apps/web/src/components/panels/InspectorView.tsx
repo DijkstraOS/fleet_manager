@@ -56,22 +56,11 @@ function NodeInspector(props: { node: MapNode; idEditPolicy: NodeIdEditPolicy; o
   );
 }
 
-/**
- * The node ID is read-only by default. A pencil opts into editing, gated by the
- * live policy: `"locked"` shows no pencil at all; `"editable-with-edge-warning"`
- * requires confirming a warning first; `"editable"` unlocks on the first tap.
- * `isEditing` is transient UI state only — it resets when the selected node
- * changes, so each selection starts read-only.
- */
 function NodeIdField(props: { node: MapNode; policy: NodeIdEditPolicy; onChange: (node: MapNode) => void }) {
   const [isEditing, setIsEditing] = useState(false);
   const locked = props.policy === "locked";
 
-  // Each new node selection starts read-only. The selected node's id mutates on
-  // every keystroke while editing (the rename cascades through `updateNode`), so
-  // we can't relock on any id change — that would drop focus mid-rename. We mark
-  // self-inflicted id changes (our own `onChange`) and relock only when the id
-  // changes WITHOUT that mark, i.e. a different node was selected.
+  // Relock only on an UNMARKED id change (a different node was selected); a rename mutates the id every keystroke, so relocking on any change would drop focus mid-rename.
   const previousIdRef = useRef(props.node.id);
   const selfRenamedRef = useRef(false);
   useEffect(() => {

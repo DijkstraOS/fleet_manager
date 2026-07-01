@@ -51,22 +51,7 @@ export function createSimulatorFleet(options: SimulatorFleetOptions): SimulatorF
 
   return {
     createAgv: (command) => {
-      const createParams: {
-        serialNumber: string;
-        manufacturer: string;
-        map: MapDocument;
-        startNodeId?: string;
-        speedMetersPerSecond?: number;
-      } = {
-        serialNumber: command.serialNumber,
-        manufacturer: command.manufacturer,
-        map: command.map,
-      };
-      if (command.startNodeId !== undefined) createParams.startNodeId = command.startNodeId;
-      if (command.speedMetersPerSecond !== undefined) {
-        createParams.speedMetersPerSecond = command.speedMetersPerSecond;
-      }
-      const agv = createSimulatedAgv(createParams);
+      const agv = createSimulatedAgv(command);
       activeAgvs.set(command.serialNumber, agv);
       options.publisher.publishConnection(agv, "ONLINE");
       options.publisher.publishAgv(agv);
@@ -77,9 +62,6 @@ export function createSimulatorFleet(options: SimulatorFleetOptions): SimulatorF
       const current = activeAgvs.get(envelope.serialNumber);
       if (!current) return;
 
-      // Refuse (and flag) an order the AGV cannot execute from its current
-      // position instead of driving an uncommanded path. The existing order, if
-      // any, is left untouched.
       const rejection = orderRejectionReason(current, envelope.order);
       if (rejection) {
         options.publisher.publishOrderStatus({

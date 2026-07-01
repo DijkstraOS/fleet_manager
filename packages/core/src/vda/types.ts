@@ -1,5 +1,4 @@
 import type {
-  Connection,
   Headerless,
   Order,
   State,
@@ -8,7 +7,6 @@ import type {
 
 export type ConnectionStatus = "ONLINE" | "OFFLINE" | "CONNECTIONBROKEN";
 export type OperatingMode = "AUTOMATIC" | "SEMIAUTOMATIC" | "MANUAL" | "SERVICE" | "TEACHIN";
-export type EStopType = "NONE" | "AUTOACK" | "MANUAL" | "REMOTE";
 
 export const VDA_5050_VERSION = "2.1.0";
 
@@ -29,5 +27,3 @@ export type VdaState = State;
 export type VdaStateDraft = Headerless<State>;
 export type VdaVisualization = Visualization;
 export type VdaVisualizationDraft = Headerless<Visualization>;
-export type VdaConnection = Connection;
-export type VdaConnectionDraft = Headerless<Connection>;

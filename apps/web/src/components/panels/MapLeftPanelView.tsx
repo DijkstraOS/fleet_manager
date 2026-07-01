@@ -15,11 +15,6 @@ import type { EditorBackgroundImage, Tool } from "../../types";
 import { ToolButton } from "../toolbar/ToolButton";
 import { CalibrationField } from "./CalibrationField";
 
-/**
- * Persistent left column of the Map tab: Map Tools, the Background section, and the
- * global Map Commands. Selection-scoped controls (delete, add reverse edge) and the
- * Inspector live in the floating card on the right, not here.
- */
 export function MapLeftPanelView(props: {
   tool: Tool;
   backgroundImage: EditorBackgroundImage | null;
@@ -36,8 +31,6 @@ export function MapLeftPanelView(props: {
   onSetCanvasHeight: (height: number) => void;
   onSetHeightAspectLocked: (locked: boolean) => void;
 }) {
-  // Height is editable only when no image constrains the aspect, or the user has
-  // unlocked it to calibrate a distorted scan.
   const heightLocked = props.backgroundImage !== null && props.heightAspectLocked;
   return (
     <aside className="left-panel command-panel">

@@ -1,6 +1,5 @@
 import type { EdgeTrajectory, MapDocument, MapEdge, MapNode } from "./types";
-// `splitEdge` needs stable id generation; these live in their own module (not ./index) to
-// avoid an index <-> trajectory import cycle.
+// Import ids from ./ids, not ./index, to avoid an index <-> trajectory import cycle.
 import { nextEdgeId, nextNodeId } from "./ids";
 
 export interface TrajectoryPoint {
@@ -63,12 +62,9 @@ export function syncTrajectoryEndpoints(edge: MapEdge, from: MapNode | undefined
 }
 
 export function syncMapEdgeTrajectoryEndpoints(edges: MapEdge[], nodes: MapNode[]): MapEdge[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
   return edges.map((edge) =>
-    syncTrajectoryEndpoints(
-      edge,
-      nodes.find((node) => node.id === edge.from),
-      nodes.find((node) => node.id === edge.to)
-    )
+    syncTrajectoryEndpoints(edge, nodeById.get(edge.from), nodeById.get(edge.to))
   );
 }
 
@@ -150,11 +146,6 @@ export function sampleQuadraticBezier(trajectory: EdgeTrajectory, segments = 32)
   );
 }
 
-export function estimateQuadraticBezierLength(trajectory: EdgeTrajectory, segments = 32): number {
-  const samples = sampleQuadraticBezier(trajectory, segments);
-  return polylineLength(samples);
-}
-
 export function getQuadraticBezierPoseAtDistance(
   trajectory: EdgeTrajectory,
   distance: number,
@@ -185,13 +176,7 @@ export function getQuadraticBezierPoseAtDistance(
   return { ...samples[samples.length - 1]!, totalLength };
 }
 
-/**
- * Splits a directed edge into two halves at its geometric midpoint, inserting a node there.
- * For a supported quadratic the curve is subdivided (each half keeps the original shape);
- * a straight edge yields two straight halves. Returns null if the edge carries a trajectory
- * that is not a supported quadratic. Pure: derives new node/edge ids from `map` without
- * mutating it.
- */
+/** Splits an edge at its midpoint, inserting a node. Returns null if the trajectory is not a supported quadratic. */
 export function splitEdge(
   edge: MapEdge,
   from: MapNode,
@@ -268,11 +253,6 @@ export function splitEdge(
   };
 }
 
-/**
- * Copies the edge attributes that should carry over when an edge is bifurcated, deliberately
- * dropping identity/geometry (`id`, `label`, `from`, `to`, `trajectory`) so the caller assigns
- * fresh values. Optional numeric fields are omitted entirely when undefined.
- */
 export function copyBifurcatedEdgeProperties(
   edge: MapEdge
 ): Omit<MapEdge, "id" | "label" | "from" | "to" | "trajectory"> {
@@ -284,11 +264,6 @@ export function copyBifurcatedEdgeProperties(
   };
 }
 
-/**
- * Subdivides a quadratic Bézier at its midpoint (de Casteljau t=0.5), returning the requested
- * half as a new trajectory anchored at `splitPointNode`. Returns null if the trajectory lacks
- * the three control points of a quadratic.
- */
 export function splitQuadraticTrajectory(
   trajectory: NonNullable<MapEdge["trajectory"]>,
   segment: "first" | "second",
@@ -303,11 +278,6 @@ export function splitQuadraticTrajectory(
     : createQuadraticBezierTrajectory(splitPointNode, end, endHandle);
 }
 
-/**
- * Resets a reverse edge to mirror the selected edge's curve: when the selection is a supported
- * quadratic, the reverse edge reuses its handle (so both directions share one control handle);
- * otherwise it falls back to a default-handle quadratic between `from` and `to`.
- */
 export function resetReverseEdgeToSelectedCurvePath(
   reverseEdge: MapEdge,
   from: MapNode,
@@ -335,7 +305,6 @@ export function edgesShareQuadraticHandle(edge: MapEdge, reverseEdge: MapEdge): 
   return Boolean(handle && reverseHandle && pointsMatch(handle, reverseHandle));
 }
 
-/** Coordinate equality within a 1e-6 tolerance (strict `<`). */
 export function pointsMatch(
   left: TrajectoryPoint,
   right: TrajectoryPoint

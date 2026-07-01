@@ -5,8 +5,10 @@ import {
   appendNode,
   applyMapOps,
   backfillCanvas,
+  buildMapIndex,
   buildVdaOrder,
   clampViewportToFloor,
+  retryUntil,
   copyBifurcatedEdgeProperties,
   createQuadraticBezierTrajectory,
   createDemoMap,
@@ -18,18 +20,20 @@ import {
   fitViewportToContent,
   floorBounds,
   floorSizeForImageAspect,
+  fitCanvasToContent,
   getQuadraticBezierPoseAtDistance,
   gridStepForViewport,
   MIN_VIEWPORT_WIDTH,
   recalibrateCanvas,
   recenterMapOnFloor,
   exportLifDocument,
-  getActionNodeIds,
   getStationNodeIds,
   getSupportNodeIds,
   nodeHasLabel,
   importLifDocument,
   nodeIdEditPolicy,
+  isActionNode,
+  isSupportNode,
   isSupportedQuadraticBezier,
   moveNode,
   nextRouteId,
@@ -292,18 +296,99 @@ describe("LIF import/export", () => {
     };
 
     const exported = exportLifDocument(map);
-    // Export stays valid through the vdma-lif parser even with a blank nodeName.
     expect(LIFParser.fromJson(JSON.stringify(exported))).not.toBeNull();
 
     const imported = importLifDocument(exported);
     const reimported = imported.nodes.find((node) => node.id === "n1");
     expect(reimported?.label).toBe("");
-    // It stays a support node (no actions, no label) after the round-trip.
-    expect([...getSupportNodeIds(imported)]).toEqual(["n1"]);
+    const supportIds = imported.nodes
+      .filter((node) => isSupportNode(node, getStationNodeIds(imported)))
+      .map((node) => node.id);
+    expect(supportIds).toEqual(["n1"]);
+  });
+
+  it("shifts off-floor plant coordinates onto the finite floor on import", () => {
+    const imported = importLifDocument({
+      metaInformation: { projectIdentification: "Plant", creator: "ext", exportTimestamp: "", lifVersion: "1.0.0" },
+      layouts: [{
+        layoutId: "plant",
+        layoutName: "Plant",
+        layoutVersion: "1",
+        nodes: [
+          { nodeId: "a", nodeName: "a", nodePosition: { x: -24.931, y: 3.06 }, vehicleTypeNodeProperties: [] },
+          { nodeId: "b", nodeName: "b", nodePosition: { x: -15.3, y: 21.42 }, vehicleTypeNodeProperties: [] },
+        ],
+        edges: [],
+        stations: [],
+      }],
+    });
+
+    expect(imported.nodes.every((node) => node.x >= 0 && node.y >= 0)).toBe(true);
+    expect(imported.nodes[0]!.x).toBeCloseTo(0, 3);
+    expect(imported.nodes[1]!.x - imported.nodes[0]!.x).toBeCloseTo(9.631, 3);
   });
 
   it("rejects documents that do not match the vdma-lif model", () => {
     expect(() => importLifDocument({ layouts: [] })).toThrow(/Invalid LIF document/);
+  });
+});
+
+describe("fitCanvasToContent", () => {
+  const withNodes = (nodes: MapNode[], edges: MapEdge[] = []): MapDocument => ({
+    ...createEmptyMap("Fit"),
+    nodes,
+    edges,
+  });
+
+  it("leaves content already within the floor untouched", () => {
+    const map = withNodes([{ id: "a", label: "A", x: 10, y: 20 }]);
+    expect(fitCanvasToContent(map)).toBe(map);
+  });
+
+  it("shifts negative coordinates into the positive quadrant without scaling", () => {
+    const map = withNodes([
+      { id: "a", label: "A", x: -30, y: 5 },
+      { id: "b", label: "B", x: 10, y: 40 },
+    ]);
+    const fitted = fitCanvasToContent(map);
+    expect(fitted.nodes.map((node) => [node.x, node.y])).toEqual([[0, 5], [40, 40]]);
+    expect(fitted.canvas).toEqual(DEFAULT_CANVAS_SIZE);
+  });
+
+  it("grows the floor to contain oversized content, preserving coordinates", () => {
+    const map = withNodes([
+      { id: "a", label: "A", x: 0, y: 0 },
+      { id: "b", label: "B", x: 500, y: 300 },
+    ]);
+    const fitted = fitCanvasToContent(map);
+    expect(fitted.canvas).toEqual({ width: 500, height: 300 });
+    expect(fitted.nodes.map((node) => [node.x, node.y])).toEqual([[0, 0], [500, 300]]);
+  });
+
+  it("translates edge trajectory control points alongside nodes", () => {
+    const map = withNodes(
+      [{ id: "a", label: "A", x: -10, y: 0 }, { id: "b", label: "B", x: 10, y: 0 }],
+      [{
+        id: "a-b",
+        label: "a -> b",
+        from: "a",
+        to: "b",
+        orientationType: "TANGENTIAL",
+        rotationAllowed: true,
+        trajectory: {
+          degree: 2,
+          knotVector: [0, 0, 0, 1, 1, 1],
+          controlPoints: [{ x: -10, y: 0 }, { x: 0, y: -5 }, { x: 10, y: 0 }],
+        },
+      }],
+    );
+    const fitted = fitCanvasToContent(map);
+    expect(fitted.nodes[0]!.x).toBe(0);
+    expect(fitted.edges[0]!.trajectory!.controlPoints).toEqual([
+      { x: 0, y: 5 },
+      { x: 10, y: 0 },
+      { x: 20, y: 5 },
+    ]);
   });
 });
 
@@ -358,17 +443,13 @@ describe("edge bifurcation / trajectory geometry", () => {
   }
 
   it("matches points within a 1e-6 tolerance", () => {
-    // |Δ| strictly below 1e-6 on both axes counts as a match.
     expect(pointsMatch({ x: 0, y: 0 }, { x: 0.0000005, y: -0.0000005 })).toBe(true);
     expect(pointsMatch({ x: 1, y: 1 }, { x: 1, y: 1 })).toBe(true);
-    // A 1e-3 gap is far outside tolerance.
     expect(pointsMatch({ x: 0, y: 0 }, { x: 0.001, y: 0 })).toBe(false);
-    // Exactly 1e-6 is NOT below the threshold (strict <), so it must not match.
     expect(pointsMatch({ x: 0, y: 0 }, { x: 0.000001, y: 0 })).toBe(false);
   });
 
   it("subdivides a quadratic at its midpoint via de Casteljau", () => {
-    // Curve start={0,0}, handle={4,4}, end={8,0}; its t=0.5 point is {4,2}.
     const trajectory = createQuadraticBezierTrajectory(
       { x: 0, y: 0 },
       { x: 8, y: 0 },
@@ -376,7 +457,6 @@ describe("edge bifurcation / trajectory geometry", () => {
     );
     const splitPoint = { id: "m", label: "m", x: 4, y: 2 };
 
-    // first half handle = midpoint(start, handle) = {2,2}; endpoint = split point.
     const first = splitQuadraticTrajectory(trajectory, "first", splitPoint);
     expect(first?.controlPoints).toEqual([
       { x: 0, y: 0 },
@@ -384,7 +464,6 @@ describe("edge bifurcation / trajectory geometry", () => {
       { x: 4, y: 2 },
     ]);
 
-    // second half handle = midpoint(handle, end) = {6,2}; start = split point.
     const second = splitQuadraticTrajectory(trajectory, "second", splitPoint);
     expect(second?.controlPoints).toEqual([
       { x: 4, y: 2 },
@@ -406,7 +485,6 @@ describe("edge bifurcation / trajectory geometry", () => {
     const copied = copyBifurcatedEdgeProperties(
       makeEdge({ maxSpeed: 1.2, orientation: 0.5, orientationType: "GLOBAL", rotationAllowed: false })
     );
-    // Identity/geometry fields are intentionally dropped so the caller assigns fresh ones.
     expect(copied).toEqual({
       maxSpeed: 1.2,
       orientation: 0.5,
@@ -421,7 +499,6 @@ describe("edge bifurcation / trajectory geometry", () => {
     const copied = copyBifurcatedEdgeProperties(
       makeEdge({ maxSpeed: undefined, orientation: undefined })
     );
-    // maxSpeed/orientation keys must be absent (not present-but-undefined).
     expect("maxSpeed" in copied).toBe(false);
     expect("orientation" in copied).toBe(false);
     expect(copied).toEqual({ orientationType: "TANGENTIAL", rotationAllowed: true });
@@ -441,7 +518,6 @@ describe("edge bifurcation / trajectory geometry", () => {
 
     expect(edgesShareQuadraticHandle(edge, sameHandle)).toBe(true);
     expect(edgesShareQuadraticHandle(edge, otherHandle)).toBe(false);
-    // A straight edge has no quadratic handle to share.
     expect(edgesShareQuadraticHandle(edge, straight)).toBe(false);
   });
 
@@ -458,17 +534,13 @@ describe("edge bifurcation / trajectory geometry", () => {
     const split = splitEdge(edge, map.nodes[0]!, map.nodes[1]!, map);
 
     expect(split).not.toBeNull();
-    // Midpoint of {0,0}-{4,2}; first free n-id with two existing nodes is n-3.
     expect(split!.node).toMatchObject({ id: "n-3", x: 2, y: 1 });
-    // The inserted midpoint is a support node: it carries a blank label.
     expect(split!.node.label).toBe("");
     const [first, second] = split!.edges;
     expect(`${first.from}->${first.to}`).toBe("a->n-3");
     expect(`${second.from}->${second.to}`).toBe("n-3->b");
-    // Straight edge -> both halves stay straight (null trajectory).
     expect(first.trajectory).toBeNull();
     expect(second.trajectory).toBeNull();
-    // Copied properties propagate to both halves.
     expect(first.maxSpeed).toBe(1.5);
     expect(second.orientationType).toBe("GLOBAL");
     expect(second.rotationAllowed).toBe(false);
@@ -493,7 +565,6 @@ describe("edge bifurcation / trajectory geometry", () => {
     const split = splitEdge(edge, map.nodes[0]!, map.nodes[1]!, map);
 
     expect(split).not.toBeNull();
-    // Split node sits at the curve's t=0.5 point {4,2}.
     expect(split!.node).toMatchObject({ x: 4, y: 2 });
     const [first, second] = split!.edges;
     expect(first.trajectory?.controlPoints).toEqual([
@@ -542,7 +613,6 @@ describe("edge bifurcation / trajectory geometry", () => {
     });
 
     const result = resetReverseEdgeToSelectedCurvePath(reverseEdge, from, to, selectedEdge);
-    // Reverse edge spans b(5,0) -> a(0,0) but reuses the selected handle {2.5,3}.
     expect(result.trajectory?.controlPoints).toEqual([
       { x: 5, y: 0 },
       { x: 2.5, y: 3 },
@@ -558,7 +628,6 @@ describe("edge bifurcation / trajectory geometry", () => {
 
     const result = resetReverseEdgeToSelectedCurvePath(reverseEdge, from, to, selectedEdge);
     expect(isSupportedQuadraticBezier(result.trajectory)).toBe(true);
-    // Endpoints follow from/to; the handle is the auto-generated default, not {2.5,3}.
     expect(result.trajectory?.controlPoints[0]).toMatchObject({ x: 5, y: 0 });
     expect(result.trajectory?.controlPoints[2]).toMatchObject({ x: 0, y: 0 });
     expect(result.trajectory?.controlPoints[1]).not.toMatchObject({ x: 2.5, y: 3 });
@@ -582,7 +651,7 @@ describe("map operations", () => {
     };
   }
 
-  // Line a→b→c with a back-edge b→a, so every edge is incident to `b`.
+  // Every edge is incident to `b`, so removeNode("b") drops them all.
   function baseMap(): MapDocument {
     return {
       ...createEmptyMap("Ops"),
@@ -623,7 +692,6 @@ describe("map operations", () => {
 
     expect(next.nodes.find((item) => item.id === "a")).toMatchObject({ x: -1, y: -1 });
     expect(findEdgeById(next, "a-b")?.trajectory?.controlPoints[0]).toMatchObject({ x: -1, y: -1 });
-    // source map untouched
     expect(map.nodes.find((item) => item.id === "a")).toMatchObject({ x: 0, y: 0 });
   });
 
@@ -666,57 +734,6 @@ describe("map operations", () => {
   });
 });
 
-describe("action-node selector", () => {
-  function node(id: string, unsupported?: MapNode["unsupported"]): MapNode {
-    return { id, label: id, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
-  }
-
-  function mapWith(nodes: MapNode[], unsupported?: MapDocument["unsupported"]): MapDocument {
-    return {
-      ...createEmptyMap("Actions"),
-      nodes,
-      edges: [],
-      ...(unsupported ? { unsupported } : {}),
-    };
-  }
-
-  it("includes a node whose vehicleTypeNodeProperties carry a non-empty actions array", () => {
-    const map = mapWith([
-      node("act", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "pick" }] }] }),
-    ]);
-    expect([...getActionNodeIds(map)]).toEqual(["act"]);
-  });
-
-  it("includes a node referenced by a station's interactionNodeIds", () => {
-    const map = mapWith(
-      [node("station-node")],
-      { stations: [{ stationId: "s1", interactionNodeIds: ["station-node"] }] }
-    );
-    expect([...getActionNodeIds(map)]).toEqual(["station-node"]);
-  });
-
-  it("excludes a plain path node with no actions and no station reference", () => {
-    const map = mapWith([
-      node("plain", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [] }] }),
-    ]);
-    expect(getActionNodeIds(map).size).toBe(0);
-  });
-
-  it("returns an empty set when unsupported data is missing or empty", () => {
-    expect(getActionNodeIds(mapWith([node("a"), node("b")])).size).toBe(0);
-    expect(getActionNodeIds(mapWith([node("a")], {})).size).toBe(0);
-    expect(getActionNodeIds(mapWith([node("a", { vehicleTypeNodeProperties: [] })], { stations: [] })).size).toBe(0);
-  });
-
-  it("includes a node satisfying both rules exactly once", () => {
-    const map = mapWith(
-      [node("both", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "drop" }] }] })],
-      { stations: [{ stationId: "s1", interactionNodeIds: ["both"] }] }
-    );
-    expect([...getActionNodeIds(map)]).toEqual(["both"]);
-  });
-});
-
 describe("station-node selector", () => {
   function node(id: string, unsupported?: MapNode["unsupported"]): MapNode {
     return { id, label: id, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
@@ -744,14 +761,96 @@ describe("station-node selector", () => {
       node("act", { vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "pick" }] }] }),
     ]);
     expect(getStationNodeIds(map).size).toBe(0);
-    // ...while the combined action/station selector still counts it.
-    expect([...getActionNodeIds(map)]).toEqual(["act"]);
   });
 
   it("returns an empty set when station data is missing or empty", () => {
     expect(getStationNodeIds(mapWith([node("a")])).size).toBe(0);
     expect(getStationNodeIds(mapWith([node("a")], {})).size).toBe(0);
     expect(getStationNodeIds(mapWith([node("a")], { stations: [] })).size).toBe(0);
+  });
+});
+
+describe("node role predicates", () => {
+  function node(id: string, label: string, unsupported?: MapNode["unsupported"]): MapNode {
+    return { id, label, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
+  }
+  const noStations: ReadonlySet<string> = new Set();
+
+  it("isSupportNode: a plain unlabeled node with no role is a support node", () => {
+    expect(isSupportNode(node("plain", ""), noStations)).toBe(true);
+  });
+
+  it("isSupportNode: a labeled node is not a support node", () => {
+    expect(isSupportNode(node("labeled", "Dock A"), noStations)).toBe(false);
+  });
+
+  it("isActionNode: a node carrying its own actions is an action node, never support", () => {
+    const withActions = node("act", "", {
+      vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [{ actionType: "pick" }] }],
+    });
+    expect(isActionNode(withActions, noStations)).toBe(true);
+    expect(isSupportNode(withActions, noStations)).toBe(false);
+  });
+
+  it("isActionNode: a station-referenced node is an action node via stationNodeIds, never support", () => {
+    const stationNode = node("station-node", "");
+    const stationNodeIds = new Set(["station-node"]);
+    expect(isActionNode(stationNode, stationNodeIds)).toBe(true);
+    expect(isSupportNode(stationNode, stationNodeIds)).toBe(false);
+  });
+
+  it("isActionNode: a node with an empty actions array and no station reference is not an action node", () => {
+    const plain = node("plain", "plain", {
+      vehicleTypeNodeProperties: [{ vehicleTypeId: "default", actions: [] }],
+    });
+    expect(isActionNode(plain, noStations)).toBe(false);
+  });
+
+  it("isActionNode: a node with no unsupported data is not an action node", () => {
+    expect(isActionNode(node("bare", "bare"), noStations)).toBe(false);
+  });
+});
+
+describe("buildMapIndex", () => {
+  function node(id: string, unsupported?: MapNode["unsupported"]): MapNode {
+    return { id, label: id, x: 0, y: 0, ...(unsupported ? { unsupported } : {}) };
+  }
+  function edge(id: string, from: string, to: string): MapEdge {
+    return { id, label: `${from} -> ${to}`, from, to, orientationType: "TANGENTIAL", rotationAllowed: true, trajectory: null };
+  }
+  function mapWith(nodes: MapNode[], edges: MapEdge[], unsupported?: MapDocument["unsupported"]): MapDocument {
+    return { ...createEmptyMap("Index"), nodes, edges, ...(unsupported ? { unsupported } : {}) };
+  }
+
+  it("resolves nodes and edges by id", () => {
+    const index = buildMapIndex(mapWith([node("a"), node("b")], [edge("e1", "a", "b")]));
+    expect(index.nodeById.get("a")?.id).toBe("a");
+    expect(index.nodeById.get("missing")).toBeUndefined();
+    expect(index.edgeById.get("e1")?.id).toBe("e1");
+  });
+
+  it("carries stationNodeIds equal to getStationNodeIds", () => {
+    const map = mapWith([node("station-node")], [], {
+      stations: [{ stationId: "s1", interactionNodeIds: ["station-node"] }],
+    });
+    const index = buildMapIndex(map);
+    expect([...index.stationNodeIds]).toEqual([...getStationNodeIds(map)]);
+    expect([...index.stationNodeIds]).toEqual(["station-node"]);
+  });
+});
+
+describe("nodeHasLabel", () => {
+  function node(label: string): MapNode {
+    return { id: "n", label, x: 0, y: 0 };
+  }
+
+  it("is false for an empty or whitespace-only label", () => {
+    expect(nodeHasLabel(node(""))).toBe(false);
+    expect(nodeHasLabel(node("   "))).toBe(false);
+  });
+
+  it("is true for a non-empty label", () => {
+    expect(nodeHasLabel(node("Dock A"))).toBe(true);
   });
 });
 
@@ -790,21 +889,6 @@ describe("support-node selector", () => {
       { stations: [{ stationId: "s1", interactionNodeIds: ["station-node"] }] }
     );
     expect(getSupportNodeIds(map).size).toBe(0);
-  });
-});
-
-describe("nodeHasLabel", () => {
-  function node(label: string): MapNode {
-    return { id: "n", label, x: 0, y: 0 };
-  }
-
-  it("is false for an empty or whitespace-only label", () => {
-    expect(nodeHasLabel(node(""))).toBe(false);
-    expect(nodeHasLabel(node("   "))).toBe(false);
-  });
-
-  it("is true for a non-empty label", () => {
-    expect(nodeHasLabel(node("Dock A"))).toBe(true);
   });
 });
 
@@ -869,12 +953,9 @@ describe("finite floor geometry", () => {
   });
 
   it("reshapes the floor to a background image aspect, keeping width", () => {
-    // A 2:1 image keeps width and halves height; a 1:2 image doubles it.
     expect(floorSizeForImageAspect(200, 2)).toEqual({ width: 200, height: 100 });
     expect(floorSizeForImageAspect(200, 0.5)).toEqual({ width: 200, height: 400 });
-    // A square image yields a square floor.
     expect(floorSizeForImageAspect(200, 1)).toEqual({ width: 200, height: 200 });
-    // Degenerate aspects (zero / non-finite) fall back to a square floor.
     expect(floorSizeForImageAspect(200, 0)).toEqual({ width: 200, height: 200 });
     expect(floorSizeForImageAspect(200, Number.NaN)).toEqual({ width: 200, height: 200 });
   });
@@ -886,32 +967,25 @@ describe("finite floor geometry", () => {
   });
 
   it("zoom-out stops at the whole floor, centered with a breathing margin", () => {
-    // A square viewport on a square floor zoomed way out: width caps just past the
-    // floor (the margin) and the floor stays centered.
     const clamped = clampViewportToFloor({ x: -500, y: -500, width: 5000, height: 5000 }, canvas);
     expect(clamped.width).toBeGreaterThan(200);
     expect(clamped.width).toBeLessThan(240);
-    // Floor is fully visible on both axes -> centered, so it overhangs equally.
     expect(clamped.x).toBeCloseTo((200 - clamped.width) / 2, 10);
     expect(clamped.y).toBeCloseTo((200 - clamped.height) / 2, 10);
   });
 
   it("hard-clamps pan so the viewport never shows past a floor edge", () => {
     const span = { width: 20, height: 20 };
-    // Pushed past the right/bottom edges -> pulled back so it ends flush at 200.
     const past = clampViewportToFloor({ x: 500, y: 500, ...span }, canvas);
     expect(past.x).toBe(180);
     expect(past.y).toBe(180);
-    // Pushed past the top/left -> pinned to the origin.
     const before = clampViewportToFloor({ x: -50, y: -50, ...span }, canvas);
     expect(before.x).toBe(0);
     expect(before.y).toBe(0);
   });
 
   it("centers a fully-visible axis instead of letting it pan", () => {
-    // Viewport wider than the floor on x but shorter on y.
     const clamped = clampViewportToFloor({ x: 70, y: 90, width: 400, height: 10 }, canvas);
-    // x axis is letterboxed -> centered; y axis still pans within the floor.
     expect(clamped.x).toBeLessThan(0);
     expect(clamped.x).toBeCloseTo((200 - clamped.width) / 2, 10);
     expect(clamped.y).toBe(90);
@@ -920,7 +994,6 @@ describe("finite floor geometry", () => {
   it("fits to content (bbox + padding), clamped to the floor", () => {
     const map = floorMap([node("a", 100, 100), node("b", 110, 104)]);
     const fit = fitViewportToContent(map, 2);
-    // Content center (105, 102) is preserved; the box covers the nodes + padding.
     expect(fit.x + fit.width / 2).toBeCloseTo(105, 6);
     expect(fit.y + fit.height / 2).toBeCloseTo(102, 6);
     expect(fit.width).toBeGreaterThanOrEqual(14);
@@ -953,19 +1026,15 @@ describe("finite floor geometry", () => {
     // bbox (-10,-5)->(0,5), center (-5,0) -> floor center (100,100): offset (+105,+100).
     expect(moved.nodes.map((item) => [item.x, item.y])).toEqual([[95, 95], [105, 105]]);
     expect(moved.edges[0]!.trajectory!.controlPoints.map((p) => [p.x, p.y])).toEqual([[95, 95], [100, 100], [105, 105]]);
-    // bbox center now sits exactly on the floor center.
     const xs = moved.nodes.map((item) => item.x);
     const ys = moved.nodes.map((item) => item.y);
     expect((Math.min(...xs) + Math.max(...xs)) / 2).toBe(100);
     expect((Math.min(...ys) + Math.max(...ys)) / 2).toBe(100);
 
-    // The translation preserves every dx/dy (and thus atan2 heading) of the edge.
     expect(headings(moved)).toEqual(headings(map));
   });
 
   it("preserves a trajectory tangent heading across the recenter translation", () => {
-    // A curved edge whose control points sit off the floor: every control point
-    // shifts by the same vector, so a sampled tangent's atan2 heading is invariant.
     const trajectory = createQuadraticBezierTrajectory({ x: -10, y: -5 }, { x: 0, y: 5 }, { x: -8, y: 4 });
     const map = floorMap(
       [node("a", -10, -5), node("b", 0, 5)],
@@ -992,7 +1061,6 @@ describe("finite floor geometry", () => {
   });
 
   it("backfills the default canvas and recenters a legacy corner map on load", () => {
-    // A legacy demo authored at corner coords (0,0)->(15,10) with no canvas field.
     const legacy = {
       ...createEmptyMap("Legacy"),
       nodes: [node("a", 0, 0), node("b", 15, 10)],
@@ -1001,7 +1069,6 @@ describe("finite floor geometry", () => {
 
     const restored = backfillCanvas(legacy as MapDocument);
     expect(restored.canvas).toEqual(DEFAULT_CANVAS_SIZE);
-    // bbox 15x10 recenters to (92.5,95)->(107.5,105), center (100,100).
     expect(restored.nodes.map((item) => [item.x, item.y])).toEqual([[92.5, 95], [107.5, 105]]);
     expect(validateMap(restored)).toEqual([]);
   });
@@ -1015,8 +1082,6 @@ describe("finite floor geometry", () => {
   });
 
   it("leaves a map that already has a canvas untouched on load (no re-center)", () => {
-    // A map deliberately placed in the corner but already migrated (has canvas):
-    // backfill must NOT yank it back to center on every reload.
     const map = floorMap([node("a", 0, 0), node("b", 15, 10)]);
     expect(backfillCanvas(map)).toBe(map);
   });
@@ -1046,7 +1111,6 @@ describe("recalibrate canvas to real-world meters", () => {
   }
 
   it("scales node coordinates proportionally to a uniform (aspect-locked) width change", () => {
-    // 200 -> 100 on both axes: a node at (100,100) (50% across, 50% down) stays at 50%.
     const map = calibMap({ width: 200, height: 200 }, [node("a", 100, 100), node("b", 50, 150)]);
     const next = recalibrateCanvas(map, { width: 100, height: 100 });
     expect(next.canvas).toEqual({ width: 100, height: 100 });
@@ -1083,7 +1147,6 @@ describe("recalibrate canvas to real-world meters", () => {
   });
 
   it("anchors content to plan-fractions across recalibration", () => {
-    // A node at fraction (0.3, 0.7) of the floor stays at that fraction afterwards.
     const map = calibMap({ width: 150, height: 90 }, [node("a", 0.3 * 150, 0.7 * 90)]);
     const next = recalibrateCanvas(map, { width: 42.5, height: 17 });
     const out = next.nodes[0]!;
@@ -1120,3 +1183,43 @@ function headings(map: MapDocument): number[] {
     return Math.atan2(to.y - from.y, to.x - from.x);
   });
 }
+
+describe("retryUntil", () => {
+  it("returns the first success without retrying", async () => {
+    let calls = 0;
+    const result = await retryUntil(
+      async () => {
+        calls += 1;
+        return "ok";
+      },
+      { timeoutMs: 1000, delayMs: 1, describe: "should not fail" },
+    );
+    expect(result).toBe("ok");
+    expect(calls).toBe(1);
+  });
+
+  it("retries until the operation succeeds", async () => {
+    let calls = 0;
+    const result = await retryUntil(
+      async () => {
+        calls += 1;
+        if (calls < 3) throw new Error("not yet");
+        return calls;
+      },
+      { timeoutMs: 1000, delayMs: 1, describe: "load thing" },
+    );
+    expect(result).toBe(3);
+    expect(calls).toBe(3);
+  });
+
+  it("throws a describe-tagged error carrying the last failure on timeout", async () => {
+    await expect(
+      retryUntil(
+        async () => {
+          throw new Error("still down");
+        },
+        { timeoutMs: 5, delayMs: 1, describe: "Broker unreachable" },
+      ),
+    ).rejects.toThrow("Broker unreachable within 5ms: still down");
+  });
+});

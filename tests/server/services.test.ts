@@ -59,7 +59,6 @@ describe("server services", () => {
   it("rejects an order whose first node is not where the AGV is", async () => {
     const handlers = createOrderHandlers(createRepository(), fleet, realtime);
 
-    // The AGV reports it is at dock-a, but this order would start it at corr-1.
     await expect(handlers.sendOrder({
       mapId: map.id,
       agvSerialNumber: "SIM-001",
@@ -100,8 +99,6 @@ describe("server services", () => {
     });
     expect(sentOrders).toHaveLength(1);
 
-    // The AGV reports it ended somewhere off the route before the loop resends,
-    // so the next iteration's first node no longer matches its position.
     agv.state = stateAt("corr-1");
     handlers.handleOrderStatus({
       orderId: result.orderId,
@@ -252,8 +249,7 @@ function createFleet(agv: KnownAgv): FleetGateway {
   };
 }
 
-// The order alignment check only consults `state.lastNodeId`, so a stub carrying
-// just that field is enough to position the AGV for these tests.
+// Partial cast intentional: assertOrderStartsAtAgv reads only state.lastNodeId. Don't expand to a full VdaState.
 function stateAt(lastNodeId: string): VdaState {
   return { lastNodeId } as unknown as VdaState;
 }

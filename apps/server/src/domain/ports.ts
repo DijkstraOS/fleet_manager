@@ -24,7 +24,6 @@ export interface MapRepository {
   list: () => MapSummary[];
   get: (id: string) => MapDocument | undefined;
   upsert: (map: MapDocument) => Promise<MapDocument>;
-  close?: () => Promise<void>;
 }
 
 export interface RouteRepository {
@@ -33,7 +32,6 @@ export interface RouteRepository {
   get: (id: string) => RouteDocument | undefined;
   upsert: (route: RouteDocument) => Promise<RouteDocument>;
   delete: (id: string) => Promise<boolean>;
-  close?: () => Promise<void>;
 }
 
 export interface KnownAgv {
@@ -75,8 +73,6 @@ export interface OrderResult {
   loop?: boolean;
   loopIteration?: number;
 }
-
-export type OrderRequest = OrderDraft;
 
 export interface MapHandlers {
   listMaps: () => MapSummary[];

@@ -8,8 +8,10 @@ import { TrackingLeftPanel } from "./components/panels/TrackingLeftPanel";
 import { TopBar } from "./components/toolbar/TopBar";
 import { useAppLifecycle } from "./hooks/useAppLifecycle";
 import { useEditorStore } from "./stores/editor-store";
+import { useRenderTally } from "./lib/render-tally";
 
 export default function App() {
+  useRenderTally("App");
   useAppLifecycle();
   const workspaceMode = useEditorStore((state) => state.workspaceMode);
 

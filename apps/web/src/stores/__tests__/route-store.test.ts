@@ -47,7 +47,7 @@ describe("route store draftActive (right-zone editor card open state)", () => {
 
   it("stays open through mid-edit actions", () => {
     useRouteStore.getState().startNewRoute();
-    useRouteStore.getState().setDraftNodeIds(["a", "b"]);
+    useRouteStore.setState({ draftNodeIds: ["a", "b"] });
     useRouteStore.getState().removeLastDraftNode();
     expect(useRouteStore.getState().draftActive).toBe(true);
     useRouteStore.getState().clearDraft();

@@ -1,40 +1,6 @@
 import type { MapDocument, MapNode } from "./types";
 
-/**
- * Derive the set of "action/station" node ids from LIF data preserved in the
- * model's `unsupported` records. This adds no model fields — it reads the same
- * standard data that LIF import round-trips through `unsupported`.
- *
- * A node counts as an action/station node when EITHER:
- *  (a) its `unsupported.vehicleTypeNodeProperties[]` has an entry with a
- *      non-empty `actions` array, OR
- *  (b) it appears in some `unsupported.stations[].interactionNodeIds` on the map.
- *
- * Pure: no I/O, no mutation.
- */
-export function getActionNodeIds(map: MapDocument): ReadonlySet<string> {
-  const actionNodeIds = new Set<string>(getStationNodeIds(map));
-
-  // Rule (a): nodes that carry their own actions.
-  for (const node of map.nodes) {
-    if (nodeHasActions(node.unsupported)) actionNodeIds.add(node.id);
-  }
-
-  return actionNodeIds;
-}
-
-/**
- * Derive the set of node ids referenced as a station interaction point — rule
- * (b) of {@link getActionNodeIds} on its own. A node is a "station node" when it
- * appears in some `unsupported.stations[].interactionNodeIds` on the map.
- *
- * Unlike {@link getActionNodeIds} this does NOT include nodes that merely carry
- * their own actions: a node with actions but no station reference is not a
- * station node. Use this for gating that must distinguish station membership
- * from action membership.
- *
- * Pure: no I/O, no mutation.
- */
+/** Node ids referenced by any station's `unsupported.stations[].interactionNodeIds`. */
 export function getStationNodeIds(map: MapDocument): ReadonlySet<string> {
   const stationNodeIds = new Set<string>();
 
@@ -61,20 +27,14 @@ export function nodeHasLabel(node: MapNode): boolean {
 
 /**
  * Derive the set of "support" node ids — pure path-support nodes that carry no
- * action/station role and no label. A support node renders as a small dot with no
- * incoming arrowhead; any node with a label OR actions is a "full" node.
- *
- * A node is a support node when it is NOT in {@link getActionNodeIds} (so station
- * and action nodes are excluded) AND it has no non-empty label.
- *
- * Pure: no I/O, no mutation.
+ * action/station role and no label.
  */
 export function getSupportNodeIds(map: MapDocument): ReadonlySet<string> {
-  const actionNodeIds = getActionNodeIds(map);
+  const stationNodeIds = getStationNodeIds(map);
   const supportNodeIds = new Set<string>();
 
   for (const node of map.nodes) {
-    if (!actionNodeIds.has(node.id) && !nodeHasLabel(node)) {
+    if (isSupportNode(node, stationNodeIds)) {
       supportNodeIds.add(node.id);
     }
   }
@@ -82,17 +42,16 @@ export function getSupportNodeIds(map: MapDocument): ReadonlySet<string> {
   return supportNodeIds;
 }
 
-/**
- * How a node's ID may be edited, derived LIVE from its current relationships —
- * not a persisted flag. Recompute whenever relationships change.
- *
- *  - `"editable"`              — no edges/routes/stations reference it; edit freely.
- *  - `"editable-with-edge-warning"` — edges reference it (but no routes/stations);
- *    `replaceNode` cascades the rename onto incident edges, so editing is safe
- *    after a confirmation warning.
- *  - `"locked"`               — a route or station references it; those don't
- *    cascade on rename, so the ID is uneditable.
- */
+/** Pass stationNodeIds in (build once via {@link getStationNodeIds}) so a per-node check never rebuilds a whole-map Set. */
+export function isActionNode(node: MapNode, stationNodeIds: ReadonlySet<string>): boolean {
+  return nodeHasActions(node.unsupported) || stationNodeIds.has(node.id);
+}
+
+export function isSupportNode(node: MapNode, stationNodeIds: ReadonlySet<string>): boolean {
+  return !nodeHasLabel(node) && !isActionNode(node, stationNodeIds);
+}
+
+/** editable-with-edge-warning is safe because replaceNode cascades the rename onto edges; routes/stations don't cascade, so they lock. */
 export type NodeIdEditPolicy = "editable" | "editable-with-edge-warning" | "locked";
 
 export function nodeIdEditPolicy(relationships: {

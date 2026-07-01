@@ -1,5 +1,5 @@
 import type { EdgeTrajectory, MapDocument, MapEdge, MapNode } from "../map/index";
-import { createEmptyMap, syncMapEdgeTrajectoryEndpoints } from "../map/index";
+import { createEmptyMap, fitCanvasToContent, syncMapEdgeTrajectoryEndpoints } from "../map/index";
 import { LIFParser } from "vdma-lif";
 import type {
   LifDocument,
@@ -34,7 +34,7 @@ export function importLifDocument(input: unknown): MapDocument {
   map.nodes = layout.nodes.map(importLifNode);
   map.edges = layout.edges.map(importLifEdge);
 
-  return map;
+  return fitCanvasToContent(map);
 }
 
 export function exportLifDocument(map: MapDocument): LifDocument {

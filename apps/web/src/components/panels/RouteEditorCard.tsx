@@ -3,18 +3,12 @@ import { validateRoute } from "@agv/core";
 import { useRouteCommands } from "../../hooks/useRouteCommands";
 import { useEditorStore } from "../../stores/editor-store";
 import { useRouteStore } from "../../stores/route-store";
+import { useRenderTally } from "../../lib/render-tally";
 import { FloatingCard } from "./FloatingCard";
 import { RouteEditorCardView } from "./RouteEditorCardView";
 
-/**
- * Right-zone container for the Route tab. Mounts the floating route editor — name, node
- * sequence, and save/clear/delete. Just the route; assigning an AGV and sending orders
- * are route actions and live in the left column (RouteLeftPanel). Opens while a route is
- * selected or a new draft is active (`draftActive`), and the header close button collapses
- * it by deselecting the route. The card is an absolute overlay over the map's right edge,
- * so mounting it never reflows the canvas.
- */
 export function RouteEditorCard() {
+  useRenderTally("RouteEditorCard");
   const map = useEditorStore((state) => state.map);
   const routes = useRouteStore((state) => state.routes);
   const selectedRouteId = useRouteStore((state) => state.selectedRouteId);
@@ -31,8 +25,7 @@ export function RouteEditorCard() {
     () => routes.find((route) => route.id === selectedRouteId) || null,
     [routes, selectedRouteId]
   );
-  // Save/delete act on the route alone — they never dispatch to an AGV, so the fleet
-  // stays out of this container. Send / Start-Loop / Stop-Loop live in RouteLeftPanel.
+  // agvs: [] — save/delete never dispatch to an AGV; send/loop (which use agvs) live in RouteLeftPanel.
   const { saveRoute, deleteRoute } = useRouteCommands({ agvs: [], routeIssues, selectedRoute });
 
   return (

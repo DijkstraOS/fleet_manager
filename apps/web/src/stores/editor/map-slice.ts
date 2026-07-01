@@ -13,8 +13,7 @@ export interface MapSlice {
 export const createMapSlice: StateCreator<EditorState, [], [], MapSlice> = (set, get) => ({
   map: createDemoMap(),
 
-  // Map-only update: apply ops and stamp `updatedAt`. Actions that also change
-  // selection/status fold `stampMap` into their own atomic `set` instead.
+  // Do NOT route actions that also change selection/status through this; they fold stampMap into their own atomic set.
   updateMap: (...ops) => set((state) => ({ map: stampMap(state.map, ...ops) })),
 
   setMapDocument: (map, status, options) => set((state) => ({
@@ -22,7 +21,6 @@ export const createMapSlice: StateCreator<EditorState, [], [], MapSlice> = (set,
     backgroundImage: options?.preserveBackground ? state.backgroundImage : null,
     selection: null,
     edgeStartNodeId: null,
-    routeNodeIds: [],
     dragNodeId: null,
     viewport: null,
     ...(status !== undefined ? { status } : {}),

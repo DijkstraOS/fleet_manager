@@ -1,8 +1,10 @@
 import { useMapCommands } from "../../hooks/useMapCommands";
 import { useEditorStore } from "../../stores/editor-store";
+import { useRenderTally } from "../../lib/render-tally";
 import { MapLeftPanelView } from "./MapLeftPanelView";
 
 export function MapLeftPanel() {
+  useRenderTally("MapLeftPanel");
   const tool = useEditorStore((state) => state.tool);
   const backgroundImage = useEditorStore((state) => state.backgroundImage);
   const canvas = useEditorStore((state) => state.map.canvas);

@@ -42,14 +42,7 @@ export function createSimulatedAgv(params: {
   };
 }
 
-/**
- * Returns a human-readable reason the AGV must refuse this order, or null if the
- * order is safe to accept. Per VDA5050 the order's first node is the node the
- * vehicle is currently standing on; an order whose first node is somewhere else
- * cannot be executed from where the AGV is, and a real vehicle would reject it
- * rather than guess a path to the start. Accepting it is what previously let the
- * simulated AGV teleport onto an uncommanded edge.
- */
+/** VDA5050: an order's first node must be the node the AGV currently stands on; return why it can't, or null. */
 export function orderRejectionReason(agv: SimulatedAgv, order: VdaOrder): string | null {
   const first = order.nodes[0];
   if (!first) return "Order contains no nodes.";
@@ -60,13 +53,7 @@ export function orderRejectionReason(agv: SimulatedAgv, order: VdaOrder): string
 }
 
 export function acceptOrder(agv: SimulatedAgv, order: VdaOrder): SimulatedAgv {
-  // A VDA5050 order is [n0, e0, n1, e1, ... e(k-1), nk] where edge e_i connects
-  // n_i -> n_(i+1). n0 is the AGV's current node, so it is never a travel target.
-  // The remaining travel targets are [n1 ... nk] and they line up one-to-one with
-  // the edges [e0 ... e(k-1)]: remainingEdges[i] is the edge that leads to
-  // remainingNodes[i]. Always dropping the leading node (rather than only when it
-  // matches the current node) keeps these two lists the same length and in lockstep,
-  // so advanceAgv can never pair a target with the wrong edge.
+  // VDA5050 orders interleave nodes/edges as [n0, e0, n1, ...] with e_i from n_i to n_(i+1); n0 is the current node (dropped via slice(1)), so remainingEdges[i] is the edge leading to remainingNodes[i].
   const remainingNodes = order.nodes.slice(1);
   const remainingEdges = [...order.edges];
   return {
@@ -91,14 +78,6 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
 
   const activeEdge = agv.remainingEdges[0];
 
-  // Safety stop: reaching the target means traversing activeEdge, which is only
-  // valid when the AGV is standing at that edge's start node. If the order and the
-  // AGV's position disagree, HOLD POSITION — do not improvise a path. Following the
-  // curve would teleport the vehicle onto an uncommanded trajectory; and a straight
-  // line to the target is no safer, since it can cut across shelving or walls that
-  // the mapped edge was drawn to route around. Standing still is the only safe move.
-  // (Orders accepted by the fleet always start at the AGV's node, so this is a
-  // last-resort guard rather than a path the simulator takes in normal operation.)
   if (!activeEdge || activeEdge.startNodeId !== agv.currentNodeId) {
     return { ...agv, driving: false };
   }
@@ -124,9 +103,6 @@ export function advanceAgv(agv: SimulatedAgv, dtMs: number): SimulatedAgv {
     };
   }
 
-  // The edge carries no trajectory, so it is a straight segment by design. The AGV
-  // is standing at its start node (guaranteed above), so a straight line to the
-  // target node follows the commanded edge rather than a fabricated shortcut.
   const dx = targetPosition.x - agv.x;
   const dy = targetPosition.y - agv.y;
   const distance = Math.hypot(dx, dy);
