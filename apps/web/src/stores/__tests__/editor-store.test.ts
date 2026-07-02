@@ -1,6 +1,7 @@
 import { buildVdaOrder, createDemoMap, createEmptyMap, isSupportedQuadraticBezier } from "@agv/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useEditorStore } from "../editor-store";
+import { useRouteStore } from "../route-store";
 
 describe("editor store", () => {
   beforeEach(() => {
@@ -366,6 +367,15 @@ describe("editor store", () => {
     expect(next.map.edges.some((edge) => edge.from === "dock-alpha")).toBe(true);
   });
 
+  it("carries a node rename into the active route draft", () => {
+    useRouteStore.setState({ draftNodeIds: ["dock-a", "corr-1"], draftActive: true });
+    const store = useEditorStore.getState();
+    store.selectNode("dock-a");
+    store.updateNode({ ...store.map.nodes.find((node) => node.id === "dock-a")!, id: "dock-alpha" });
+
+    expect(useRouteStore.getState().draftNodeIds).toEqual(["dock-alpha", "corr-1"]);
+  });
+
   it("deletes selected nodes and dependent edges", () => {
     const store = useEditorStore.getState();
     store.selectNode("dock-a");
@@ -374,5 +384,31 @@ describe("editor store", () => {
     const next = useEditorStore.getState();
     expect(next.map.nodes.some((node) => node.id === "dock-a")).toBe(false);
     expect(next.map.edges.some((edge) => edge.from === "dock-a" || edge.to === "dock-a")).toBe(false);
+  });
+
+  it("prunes a deleted node from the active route draft", () => {
+    useRouteStore.setState({ draftNodeIds: ["dock-a", "corr-1"], draftActive: true });
+    const store = useEditorStore.getState();
+    store.selectNode("dock-a");
+    store.deleteSelection();
+
+    expect(useRouteStore.getState().draftNodeIds).toEqual(["corr-1"]);
+  });
+
+  it("prunes dangling draft ids when a new map document replaces the node set", () => {
+    // Re-importing a same-id map that drops nodes won't re-fire the [mapId] route reload,
+    // so setMapDocument must reconcile the draft or it silently blocks Save/Send.
+    useRouteStore.setState({ draftNodeIds: ["dock-a", "corr-1"], draftActive: true });
+    useEditorStore.getState().setMapDocument(createEmptyMap());
+
+    expect(useRouteStore.getState().draftNodeIds).toEqual([]);
+  });
+
+  it("keeps the route draft intact when the map is saved (same nodes back)", () => {
+    useRouteStore.setState({ draftNodeIds: ["dock-a", "corr-1"], draftActive: true });
+    // saveMap round-trips setMapDocument with the same node set — the draft must survive.
+    useEditorStore.getState().setMapDocument(createDemoMap(), "Saved.", { preserveBackground: true });
+
+    expect(useRouteStore.getState().draftNodeIds).toEqual(["dock-a", "corr-1"]);
   });
 });

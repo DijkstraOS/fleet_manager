@@ -1,5 +1,6 @@
 import { createDemoMap, slugify, type MapDocument, type MapOp } from "@agv/core";
 import type { StateCreator } from "zustand";
+import { useRouteStore } from "../route-store";
 import { stampMap } from "./stamp";
 import type { EditorState } from "./types";
 
@@ -16,15 +17,21 @@ export const createMapSlice: StateCreator<EditorState, [], [], MapSlice> = (set,
   // Do NOT route actions that also change selection/status through this; they fold stampMap into their own atomic set.
   updateMap: (...ops) => set((state) => ({ map: stampMap(state.map, ...ops) })),
 
-  setMapDocument: (map, status, options) => set((state) => ({
-    map,
-    backgroundImage: options?.preserveBackground ? state.backgroundImage : null,
-    selection: null,
-    edgeStartNodeId: null,
-    dragNodeId: null,
-    viewport: null,
-    ...(status !== undefined ? { status } : {}),
-  })),
+  setMapDocument: (map, status, options) => {
+    // A new map document replaces the node set; keep the route draft (in route-store)
+    // from dangling on ids the incoming map lacks. Same-id re-imports don't re-fire the
+    // [mapId] route reload, so without this the draft would silently block Save/Send.
+    useRouteStore.getState().reconcileDraftToMap(map);
+    set((state) => ({
+      map,
+      backgroundImage: options?.preserveBackground ? state.backgroundImage : null,
+      selection: null,
+      edgeStartNodeId: null,
+      dragNodeId: null,
+      viewport: null,
+      ...(status !== undefined ? { status } : {}),
+    }));
+  },
 
   renameMap: (name) => get().updateMap((map) => ({
     ...map,

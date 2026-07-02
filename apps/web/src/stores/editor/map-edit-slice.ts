@@ -18,6 +18,7 @@ import {
   type MapNode,
 } from "@agv/core";
 import type { StateCreator } from "zustand";
+import { useRouteStore } from "../route-store";
 import { selectedEdge, selectedNode } from "./guards";
 import { stampMap } from "./stamp";
 import type { EditorState } from "./types";
@@ -152,29 +153,31 @@ export const createMapEditSlice: StateCreator<EditorState, [], [], MapEditSlice>
 
   endDragNode: () => set({ dragNodeId: null }),
 
-  deleteSelection: () => set((state) => {
-    const { selection } = state;
-    if (!selection) return {};
-    if (selection.type === "node") {
-      return {
-        selection: null,
-        map: stampMap(state.map, removeNode(selection.id)),
-      };
-    }
-    return {
+  deleteSelection: () => {
+    const { selection } = get();
+    if (!selection) return;
+    // Prune the deleted node from the active route draft (it lives in route-store);
+    // removeNode already cascades into the map's own edges.
+    if (selection.type === "node") useRouteStore.getState().reconcileRemovedNode(selection.id);
+    set((state) => ({
       selection: null,
-      map: stampMap(state.map, removeEdge(selection.id)),
-    };
-  }),
+      map: stampMap(
+        state.map,
+        selection.type === "node" ? removeNode(selection.id) : removeEdge(selection.id),
+      ),
+    }));
+  },
 
-  updateNode: (next) => set((state) => {
-    const previous = selectedNode(state);
-    if (!previous) return {};
-    return {
+  updateNode: (next) => {
+    const previous = selectedNode(get());
+    if (!previous) return;
+    // Carry a node rename into the route draft so it doesn't dangle on the old id.
+    useRouteStore.getState().reconcileRenamedNode(previous.id, next.id);
+    set((state) => ({
       selection: { type: "node", id: next.id },
       map: stampMap(state.map, replaceNode(previous.id, next)),
-    };
-  }),
+    }));
+  },
 
   updateEdge: (next) => set((state) => {
     const current = selectedEdge(state);

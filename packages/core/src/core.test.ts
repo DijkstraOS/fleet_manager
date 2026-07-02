@@ -38,6 +38,8 @@ import {
   moveNode,
   nextRouteId,
   pointsMatch,
+  edgeFromToKey,
+  resolveRoute,
   removeEdge,
   removeNode,
   replaceEdge,
@@ -64,6 +66,29 @@ describe("map validation", () => {
     const map = createDemoMap();
     const issues = validateRoute(map, ["dock-a", "mat-b"]);
     expect(issues[0]?.code).toBe("route.edge.missing");
+  });
+
+  it("keys directed edges without colliding on ids that contain the delimiter", () => {
+    // Ids arrive verbatim from LIF import / the inspector, so they may contain spaces.
+    expect(edgeFromToKey("a", "b c")).not.toBe(edgeFromToKey("a b", "c"));
+  });
+
+  it("resolves a route to the exact directed edge when node ids contain spaces", () => {
+    const node = (id: string): MapNode => ({ id, label: "", x: 0, y: 0 });
+    const edge = (id: string, from: string, to: string): MapEdge => ({
+      id, label: "", from, to, orientationType: "TANGENTIAL", rotationAllowed: true, trajectory: null,
+    });
+    const map: MapDocument = {
+      id: "collide", name: "collide", version: "1", createdAt: "t", updatedAt: "t",
+      canvas: DEFAULT_CANVAS_SIZE,
+      nodes: [node("a"), node("b c"), node("a b"), node("c")],
+      // "a b"->"c" is listed first, so a colliding key would have first-match-wins hand it back.
+      edges: [edge("wrong", "a b", "c"), edge("right", "a", "b c")],
+    };
+
+    const { edges, issues } = resolveRoute(map, ["a", "b c"]);
+    expect(edges[0]?.id).toBe("right");
+    expect(issues).toEqual([]);
   });
 
   it("accepts supported quadratic edge trajectories and rejects malformed trajectory values", () => {

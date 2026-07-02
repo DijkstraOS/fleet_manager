@@ -13,7 +13,10 @@ export interface MapIndex {
 }
 
 export function edgeFromToKey(from: string, to: string): string {
-  return `${from} ${to}`;
+  // Length-prefix `from` so an id can't forge the delimiter: 'a'->'b c' and
+  // 'a b'->'c' must key distinctly (ids arrive verbatim from LIF import and the
+  // inspector, and a collision here resolves a live AGV onto the wrong edge).
+  return `${from.length}:${from}:${to}`;
 }
 
 export function buildMapIndex(map: MapDocument): MapIndex {

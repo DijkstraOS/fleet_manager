@@ -1,9 +1,13 @@
-import type { RouteDocument } from "@agv/core";
+import { createEmptyMap, type MapDocument, type RouteDocument } from "@agv/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useRouteStore } from "../route-store";
 
 function route(id: string, name: string, nodeIds: string[]): RouteDocument {
   return { id, mapId: "map-1", name, nodeIds, createdAt: "t", updatedAt: "t" };
+}
+
+function mapWith(nodeIds: string[]): MapDocument {
+  return { ...createEmptyMap(), nodes: nodeIds.map((id) => ({ id, label: "", x: 0, y: 0 })) };
 }
 
 describe("route store draftActive (right-zone editor card open state)", () => {
@@ -71,5 +75,52 @@ describe("route store draftActive (right-zone editor card open state)", () => {
     useRouteStore.getState().removeRouteLocal("r1");
     expect(useRouteStore.getState().draftActive).toBe(false);
     expect(useRouteStore.getState().selectedRouteId).toBeNull();
+  });
+});
+
+describe("route store draft reconciliation (map node deletes/renames)", () => {
+  beforeEach(() => {
+    useRouteStore.setState({
+      routes: [],
+      selectedRouteId: null,
+      draftName: "New Route",
+      draftNodeIds: ["a", "b", "c"],
+      status: "Editing.",
+      draftActive: true,
+    });
+  });
+
+  it("prunes a removed node from the draft", () => {
+    useRouteStore.getState().reconcileRemovedNode("b");
+    expect(useRouteStore.getState().draftNodeIds).toEqual(["a", "c"]);
+  });
+
+  it("leaves the draft untouched (same reference) when the removed node isn't drafted", () => {
+    const before = useRouteStore.getState().draftNodeIds;
+    useRouteStore.getState().reconcileRemovedNode("z");
+    expect(useRouteStore.getState().draftNodeIds).toBe(before);
+  });
+
+  it("rewrites a renamed node id in the draft", () => {
+    useRouteStore.getState().reconcileRenamedNode("b", "b-2");
+    expect(useRouteStore.getState().draftNodeIds).toEqual(["a", "b-2", "c"]);
+  });
+
+  it("no-ops a rename to the same id or of an undrafted node", () => {
+    const before = useRouteStore.getState().draftNodeIds;
+    useRouteStore.getState().reconcileRenamedNode("b", "b");
+    useRouteStore.getState().reconcileRenamedNode("z", "z-2");
+    expect(useRouteStore.getState().draftNodeIds).toBe(before);
+  });
+
+  it("drops draft ids the incoming map lacks (import / same-id re-import)", () => {
+    useRouteStore.getState().reconcileDraftToMap(mapWith(["a", "c"]));
+    expect(useRouteStore.getState().draftNodeIds).toEqual(["a", "c"]);
+  });
+
+  it("preserves the draft (same reference) when every draft id survives the swap (save roundtrip)", () => {
+    const before = useRouteStore.getState().draftNodeIds;
+    useRouteStore.getState().reconcileDraftToMap(mapWith(["a", "b", "c", "d"]));
+    expect(useRouteStore.getState().draftNodeIds).toBe(before);
   });
 });

@@ -1,5 +1,6 @@
 import { memo, type PointerEvent, type RefObject } from "react";
 import {
+  edgeFromToKey,
   isSupportNode,
   nodeHasLabel,
   getQuadraticBezierHandle,
@@ -213,7 +214,7 @@ function EdgeLayer(props: {
         const to = props.index.nodeById.get(edge.to);
         if (!from || !to) return null;
         const active = props.selection?.type === "edge" && props.selection.id === edge.id;
-        const routeActive = routeEdgeKeys.has(`${edge.from} ${edge.to}`);
+        const routeActive = routeEdgeKeys.has(edgeFromToKey(edge.from, edge.to));
         const showArrow = !isSupportNode(to, props.index.stationNodeIds);
         const className = edgeClass(active, routeActive, props.workspaceMode, showArrow);
         const handle = getQuadraticBezierHandle(edge.trajectory);
@@ -308,7 +309,7 @@ function nodeClass(id: string, selection: Selection, edgeStart: string | null, r
 function routeEdgeKeySet(route: string[]): Set<string> {
   const keys = new Set<string>();
   for (let index = 0; index < route.length - 1; index += 1) {
-    keys.add(`${route[index]} ${route[index + 1]}`);
+    keys.add(edgeFromToKey(route[index]!, route[index + 1]!));
   }
   return keys;
 }
